@@ -1,0 +1,8 @@
+<RCC>
+  <qresource prefix="icones">
+    <file>resources/64x64/actions/dialog-apply.png</file>
+    <file>resources/64x64/actions/dialog-cancel-2.png</file>
+    <file>resources/64x64/actions/dialog-disable.png</file>
+    <file>resources/64x64/actions/dialog-ok-2.png</file>
+  </qresource>
+</RCC>
