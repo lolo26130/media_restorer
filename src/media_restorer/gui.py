@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QDockWidget,
     QFileDialog,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -37,6 +38,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from media_restorer.colab_calc import ColabCalc
 from media_restorer.engines import ENGINE_PARAMS, Engine, build_engine
 from media_restorer.download_models import MODEL_REGISTRY
 from media_restorer.power import performance_mode
@@ -329,7 +331,7 @@ class _DownloadDialog(QDialog):
 # Fenêtre principale
 # ---------------------------------------------------------------------------
 
-class PhotoRestorationGUI(QMainWindow):
+class PhotoRestorationGUI(ColabCalc, QMainWindow):
     """Fenêtre principale de l'application de restauration photo.
 
     Charge une image (ou un répertoire), choisit un moteur de restauration
@@ -360,10 +362,12 @@ class PhotoRestorationGUI(QMainWindow):
         # Expose les QActions directement sur self pour tooltips_from_code.
         # setupUi(self) les crée sur self._ui ; on les copie pour que
         # inspect.getmembers(self) les trouve sous leur nom "action*".
-        self.actionOpen    = self._ui.actionOpen
-        self.actionRestore = self._ui.actionRestore
-        self.actionSave    = self._ui.actionSave
-        self.actionBatch   = self._ui.actionBatch
+        self.actionOpen          = self._ui.actionOpen
+        self.actionRestore       = self._ui.actionRestore
+        self.actionSave          = self._ui.actionSave
+        self.actionBatch         = self._ui.actionBatch
+        self.actionColabConnect  = self._ui.actionColabConnect
+        self.actionColabRestore  = self._ui.actionColabRestore
 
         # ── pg.ImageView — image originale, ajouté dans imageContainer ───
         self._image_view = pg.ImageView()
@@ -483,6 +487,71 @@ class PhotoRestorationGUI(QMainWindow):
         self._start_batch()
 
     # ------------------------------------------------------------------
+    # Colab
+    # ------------------------------------------------------------------
+
+    @pyqtSlot()
+    def on_actionColabConnect_triggered(self) -> None:
+        """Configure l'URL du tunnel cloudflared pointant vers le serveur Colab.
+
+        Colle l'URL affichée par la cellule « tunnel » du notebook après
+        démarrage.  Vérifie la connexion via GET /health et active l'action
+        « Restaurer (Colab) » si une image est déjà chargée.
+        """
+        url, ok = QInputDialog.getText(
+            self, "Connexion Colab", "URL du tunnel cloudflared :"
+        )
+        if not ok or not url.strip():
+            return
+        self._colab__set_url(url.strip())
+        if self._colab__is_connected():
+            self.statusBar().showMessage("Colab : connecté ✓")
+            self._ui.actionColabRestore.setEnabled(self._original is not None)
+        else:
+            self.statusBar().showMessage("Colab : URL inaccessible ✗")
+            QMessageBox.warning(
+                self,
+                "Colab",
+                f"Impossible de joindre :\n{url.strip()}\n\n(GET /health a échoué)",
+            )
+
+    @pyqtSlot()
+    def on_actionColabRestore_triggered(self) -> None:
+        """Lance la restauration via le serveur Google Colab (GPU).
+
+        Même comportement que la restauration locale : thread d'arrière-plan,
+        résultat affiché dans la ResultWindow du moteur sélectionné, action
+        Enregistrer activée en cas de succès.
+        """
+        if self._original is None:
+            return
+        self._pending_engine = self._current_engine
+        self._ui.actionColabRestore.setEnabled(False)
+        self.statusBar().showMessage(
+            f"Restauration Colab en cours ({self._pending_engine.value})…"
+        )
+        self._colab__start_restore(
+            self._original,
+            self._pending_engine.value,
+            self._on_colab_restore_done,
+            self._on_colab_restore_error,
+        )
+
+    def _on_colab_restore_done(self, result: np.ndarray) -> None:
+        self._restored = result
+        win = self._result_windows[self._pending_engine]
+        self._register_window(win)
+        win.show_image(result)
+        self._ui.actionSave.setEnabled(True)
+        self._ui.actionColabRestore.setEnabled(True)
+        self.statusBar().showMessage("Restauration Colab terminée.")
+
+    def _on_colab_restore_error(self, msg: str) -> None:
+        self._ui.actionColabRestore.setEnabled(True)
+        QMessageBox.critical(self, f"Erreur Colab — {self._pending_engine.value}", msg)
+        self.statusBar().showMessage("Échec de la restauration Colab.")
+
+    # ------------------------------------------------------------------
     # Tooltips
     # ------------------------------------------------------------------
 
@@ -544,6 +613,7 @@ class PhotoRestorationGUI(QMainWindow):
         self._restored = None
         self._ui.actionSave.setEnabled(False)
         self._ui.actionRestore.setEnabled(True)
+        self._ui.actionColabRestore.setEnabled(self._colab__get_url() is not None)
         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) if img.ndim == 3 else img
         self._image_view.setImage(rgb, autoLevels=False, levels=(0, 255))
         self.statusBar().showMessage(f"Image chargée : {path}")
@@ -668,7 +738,7 @@ class PhotoRestorationGUI(QMainWindow):
         "QThread: Destroyed while thread is still running" (le GC Python
         libère le worker avant que le thread C++ ait fini).
         """
-        for worker in (self._worker, self._batch_worker):
+        for worker in (self._worker, self._batch_worker, self._colab_worker):
             if worker is not None and worker.isRunning():
                 worker.terminate()
                 worker.wait()

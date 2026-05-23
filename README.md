@@ -4,10 +4,10 @@ Dans le worktree (pour commiter) :
 git add -A && git commit
 
 Depuis n'importe où (pour merger dans main) :
-git -C /home/laurent/Documents/Python/aaa_modules/Bringing-Old-Photos-Back-to-Life merge --ff-only worktree-ui-engines-refactor
+git -C /home/laurent/Documents/Python/aaa_modules/media_restorer merge --ff-only worktree-ui-engines-refactor
 
 Si le merge échoue à cause de fichiers stagés dans le dépôt principal (comme gui.py plusieurs fois) :
-git -C /home/laurent/Documents/Python/aaa_modules/Bringing-Old-Photos-Back-to-Life reset HEAD && git -C /home/laurent/Documents/Python/aaa_modules/Bringing-Old-Photos-Back-to-Life checkout -- .
+git -C /home/laurent/Documents/Python/aaa_modules/media_restorer reset HEAD && git -C /home/laurent/Documents/Python/aaa_modules/media_restorer checkout -- .
 puis relancer le merge.
 
 
@@ -17,8 +17,8 @@ puis relancer le merge.
 
 
 Projet
-Bringing-Old-Photos-Back-to-Life — PyQt6, restauration photo
-- Repo : ~/Documents/Python/aaa_modules/Bringing-Old-Photos-Back-to-Life
+media_restorer — PyQt6, restauration photo
+- Repo : ~/Documents/Python/aaa_modules/media_restorer
 - Package : src/media_restorer/
 
 Architecture

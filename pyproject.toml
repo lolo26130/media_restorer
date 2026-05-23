@@ -19,6 +19,7 @@ dependencies = [
     "pyqtgraph>=0.13",
     "tqdm>=4.66",
     "numpy>=1.26",
+    "requests>=2.31",
 ]
 
 [project.optional-dependencies]

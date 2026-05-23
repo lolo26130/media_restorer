@@ -64,8 +64,16 @@
     <addaction name="actionRestore"/>
     <addaction name="actionBatch"/>
    </widget>
+   <widget class="QMenu" name="menuColab">
+    <property name="title">
+     <string>Colab</string>
+    </property>
+    <addaction name="actionColabConnect"/>
+    <addaction name="actionColabRestore"/>
+   </widget>
    <addaction name="menuFichiers"/>
    <addaction name="menuTraitement"/>
+   <addaction name="menuColab"/>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
   <widget class="QToolBar" name="toolBar">
@@ -82,6 +90,8 @@
    <addaction name="actionRestore"/>
    <addaction name="actionSave"/>
    <addaction name="actionBatch"/>
+   <addaction name="actionColabConnect"/>
+   <addaction name="actionColabRestore"/>
   </widget>
   <action name="actionOpen">
    <property name="icon">
@@ -151,6 +161,41 @@
    </property>
    <property name="shortcut">
     <string>Ctrl+B</string>
+   </property>
+  </action>
+  <action name="actionColabConnect">
+   <property name="icon">
+    <iconset resource="../resources/icons/media_restorer.qrc">
+     <normaloff>:/icons/preferences-system-network-2.png</normaloff>:/icons/preferences-system-network-2.png
+    </iconset>
+   </property>
+   <property name="text">
+    <string>Connecter Colab</string>
+   </property>
+   <property name="toolTip">
+    <string>Saisir l'URL du tunnel cloudflared (Ctrl+Shift+C)</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+Shift+C</string>
+   </property>
+  </action>
+  <action name="actionColabRestore">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="icon">
+    <iconset resource="../resources/icons/media_restorer.qrc">
+     <normaloff>:/icons/atom-32x32-14323.png</normaloff>:/icons/atom-32x32-14323.png
+    </iconset>
+   </property>
+   <property name="text">
+    <string>Restaurer (Colab)</string>
+   </property>
+   <property name="toolTip">
+    <string>Restaurer via Google Colab GPU (Ctrl+Shift+R)</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+Shift+R</string>
    </property>
   </action>
   <widget class="QDockWidget" name="dockTooltips">
