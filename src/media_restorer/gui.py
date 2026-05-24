@@ -167,7 +167,7 @@ class _RestoreWorker(QThread):
 
 
 class _BatchRestoreWorker(QThread):
-    image_done = pyqtSignal(str, float)  # filename, cpu_seconds
+    image_done = pyqtSignal(str, float)  # filename, wall_seconds
     all_done   = pyqtSignal(int, int)    # n_success, n_total
     file_error = pyqtSignal(str, str)    # filename, message
 
@@ -205,12 +205,12 @@ class _BatchRestoreWorker(QThread):
         with performance_mode():
             for img_path in images:
                 out_path = out_dir / img_path.relative_to(self._dir)
-                t0       = time.process_time()
+                t0       = time.monotonic()
                 try:
                     eng.restore_file(img_path, out_path)
-                    cpu_elapsed = time.process_time() - t0
+                    wall_elapsed = time.monotonic() - t0
                     n_success  += 1
-                    self.image_done.emit(img_path.name, cpu_elapsed)
+                    self.image_done.emit(img_path.name, wall_elapsed)
                 except Exception as exc:
                     self.file_error.emit(img_path.name, str(exc))
                 if _gpu:
@@ -724,11 +724,14 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
         if not images:
             QMessageBox.information(self, "Répertoire vide", "Aucune image trouvée.")
             return
-        self._pending_batch = self._current_engine
+        self._pending_batch    = self._current_engine
+        self._batch_done       = 0
+        self._batch_total      = len(images)
+        self._batch_elapsed    = 0.0        # somme des durées observées
         params = self._read_params(self._pending_batch)
         self._ui.actionBatch.setEnabled(False)
         self.statusBar().showMessage(
-            f"Traitement de {len(images)} image(s) avec {self._pending_batch.value}…"
+            f"0 / {self._batch_total} — {self._pending_batch.value} en cours…"
         )
         self._batch_worker = _BatchRestoreWorker(
             dir_path, self._pending_batch, self._model_path, params, recursive
@@ -738,9 +741,14 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
         self._batch_worker.all_done.connect(self._on_batch_all_done)
         self._batch_worker.start()
 
-    def _on_batch_image_done(self, filename: str, cpu_seconds: float) -> None:
+    def _on_batch_image_done(self, filename: str, wall_seconds: float) -> None:
+        self._batch_done    += 1
+        self._batch_elapsed += wall_seconds
+        avg = self._batch_elapsed / self._batch_done
         self.statusBar().showMessage(
-            f"Dernière image : {filename} — temps CPU : {cpu_seconds:.1f} s"
+            f"{self._batch_done} / {self._batch_total} images"
+            f"  —  moy. {avg:.1f} s/img"
+            f"  —  {filename}"
         )
 
     def _on_batch_file_error(self, filename: str, msg: str) -> None:
