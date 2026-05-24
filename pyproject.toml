@@ -46,14 +46,14 @@ media-restorer = "media_restorer.cli:main"
 requires = ["uv_build>=0.11.7,<0.12.0"]
 build-backend = "uv_build"
 
-# PyTorch CPU-only (évite de télécharger les binaires CUDA inutiles)
+# PyTorch ROCm 5.7 — cible la Radeon 780M (gfx1103) via HSA_OVERRIDE_GFX_VERSION
 [tool.uv.sources]
-torch = [{ index = "pytorch-cpu" }]
-torchvision = [{ index = "pytorch-cpu" }]
+torch = [{ index = "pytorch-rocm" }]
+torchvision = [{ index = "pytorch-rocm" }]
 
 [[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm5.7"
 explicit = true
 
 # Déclare ce répertoire comme racine de workspace autonome (isolé du parent)

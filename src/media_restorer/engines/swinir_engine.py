@@ -7,13 +7,14 @@ argentique et rayures fines sans recourir à un traitement face-spécifique :
 l'image restaurée conserve le naturel de l'original.
 
 Caractéristiques :
-  - Scale 1 (pas de zoom) : aucune distorsion de proportion
-  - Non spécialisé visages : résultats naturels sur portraits et paysages
-  - Léger (≈ 38 Mo) vs GFPGAN (333 Mo)
 
-Poids à télécharger : 005_colorDN_DFWB_s128w8_SwinIR-M_noise25.pth
-  https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/005_colorDN_DFWB_s128w8_SwinIR-M_noise25.pth
-À placer dans : models/005_colorDN_DFWB_s128w8_SwinIR-M_noise25.pth
+- Scale 1 (pas de zoom) : aucune distorsion de proportion
+- Non spécialisé visages : résultats naturels sur portraits et paysages
+- Léger (≈ 38 Mo) vs GFPGAN (333 Mo)
+
+Poids : ``005_colorDN_DFWB_s128w8_SwinIR-M_noise25.pth`` —
+https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/005_colorDN_DFWB_s128w8_SwinIR-M_noise25.pth
+(à placer dans ``models/005_colorDN_DFWB_s128w8_SwinIR-M_noise25.pth``)
 """
 from __future__ import annotations
 
@@ -42,19 +43,21 @@ class SwinIREngine(BaseEngine):
     les poussières fines et les rayures légères.
 
     Caractéristiques :
-      - Scale × 1 (pas d'agrandissement) : proportions exactes conservées
-      - Non spécialisé visages : résultat naturel sur portraits *et* paysages
-      - Léger (≈ 38 Mo) par rapport à GFPGAN (333 Mo)
-      - Padding réfléchissant pour gérer les images de taille quelconque
+
+    - Scale × 1 (pas d'agrandissement) : proportions exactes conservées
+    - Non spécialisé visages : résultat naturel sur portraits *et* paysages
+    - Léger (≈ 38 Mo) par rapport à GFPGAN (333 Mo)
+    - Padding réfléchissant pour gérer les images de taille quelconque
 
     Cas d'usage :
-      - Réduction du grain argentique sur pellicule numérisée
-      - Nettoyage doux sans perte de détail sur paysages et architectures
-      - Premier passage avant un agrandissement Real-ESRGAN
 
-    Poids à télécharger : ``005_colorDN_DFWB_s128w8_SwinIR-M_noise25.pth``
-      https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/005_colorDN_DFWB_s128w8_SwinIR-M_noise25.pth
-    À placer dans : ``models/005_colorDN_DFWB_s128w8_SwinIR-M_noise25.pth``
+    - Réduction du grain argentique sur pellicule numérisée
+    - Nettoyage doux sans perte de détail sur paysages et architectures
+    - Premier passage avant un agrandissement Real-ESRGAN
+
+    Poids : ``005_colorDN_DFWB_s128w8_SwinIR-M_noise25.pth`` —
+    https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/005_colorDN_DFWB_s128w8_SwinIR-M_noise25.pth
+    (à placer dans ``models/005_colorDN_DFWB_s128w8_SwinIR-M_noise25.pth``)
 
     Paramètres
     ----------

@@ -13,6 +13,12 @@ Interface en ligne de commande
 .. automodule:: media_restorer.cli
    :members:
 
+.. note::
+
+   ``cli.py`` positionne ``HSA_OVERRIDE_GFX_VERSION=11.0.0`` au démarrage
+   pour activer ROCm sur les GPU AMD non listés officiellement (voir
+   :doc:`/acceleration`).
+
 Compatibilité torchvision
 --------------------------
 

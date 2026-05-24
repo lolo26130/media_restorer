@@ -26,6 +26,9 @@ napoleon_numpy_docstring = True
 napoleon_google_docstring = False
 autosummary_generate = True
 
+# gui.py nécessite un display X11 ; on l'importe en mode mock pour le build
+autodoc_mock_imports = ["PyQt6", "pyqtgraph", "OutilsQt"]
+
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
     "numpy":  ("https://numpy.org/doc/stable", None),

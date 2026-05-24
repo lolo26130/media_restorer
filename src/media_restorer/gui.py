@@ -423,6 +423,38 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
         # ── Tooltips — mode initial depuis comboBox ────────────────────
         self._setup_tooltips(self._ui.comboTooltipMode.currentText())
 
+        # ── Badge de calcul (droite de la statusBar) ──────────────────
+        self._compute_badge = QLabel()
+        self._compute_badge.setContentsMargins(0, 0, 4, 0)
+        self.statusBar().addPermanentWidget(self._compute_badge)
+        self._refresh_compute_badge()
+
+    # ------------------------------------------------------------------
+    # Badge de calcul
+    # ------------------------------------------------------------------
+
+    def _refresh_compute_badge(self) -> None:
+        """Met à jour le badge GPU/CPU/Colab à droite de la barre de statut."""
+        import torch
+        if self._colab__get_url() is not None:
+            text  = "Colab ☁"
+            style = "color:#0055aa; background:#ddeeff; border:1px solid #0055aa;"
+        elif torch.cuda.is_available():
+            name  = (torch.cuda.get_device_name(0)
+                     .replace("AMD Radeon ", "")
+                     .replace(" Graphics", "")
+                     .strip())
+            text  = f"GPU · {name}"
+            style = "color:#1a6b1a; background:#e0f5e0; border:1px solid #4caf50;"
+        else:
+            text  = "CPU"
+            style = "color:#555555; background:#f0f0f0; border:1px solid #aaaaaa;"
+        self._compute_badge.setText(text)
+        self._compute_badge.setStyleSheet(
+            f"QLabel {{ {style} border-radius:3px; padding:1px 6px;"
+            f" font-size:11px; font-weight:bold; }}"
+        )
+
     # ------------------------------------------------------------------
     # Propriétés
     # ------------------------------------------------------------------
@@ -507,7 +539,10 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
         if self._colab__is_connected():
             self.statusBar().showMessage("Colab : connecté ✓")
             self._ui.actionColabRestore.setEnabled(self._original is not None)
+            self._refresh_compute_badge()
         else:
+            self._colab__set_url("")          # URL invalide — on efface
+            self._refresh_compute_badge()
             self.statusBar().showMessage("Colab : URL inaccessible ✗")
             QMessageBox.warning(
                 self,

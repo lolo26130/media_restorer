@@ -1,6 +1,7 @@
 """Compatibility shims importés avant basicsr dans chaque moteur.
 
 Patches appliqués :
+
 - torchvision >= 0.17 a supprimé ``functional_tensor`` ; on le recrée.
 - torch.meshgrid sans ``indexing=`` produit un UserWarning dans torch >= 1.10 ;
   le comportement legacy (indexing='ij') est conservé par BasicSR — on filtre

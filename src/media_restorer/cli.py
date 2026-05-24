@@ -3,8 +3,27 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
+
+# Stratégie générale — activation GPU AMD (ROCm)
+# ------------------------------------------------
+# PyTorch ROCm choisit le backend GPU via l'API HSA.  Certaines puces AMD
+# récentes ne figurent pas encore dans la liste de support officielle de
+# ROCm mais sont binairemement compatibles avec une version antérieure.
+# HSA_OVERRIDE_GFX_VERSION substitue l'identifiant de la puce au moment
+# de la sélection des noyaux de calcul.  La variable est positionnée via
+# setdefault : une valeur déjà présente dans l'environnement est respectée.
+#
+# Spécifique à cette machine — AMD Radeon 780M (Ryzen 8845HS)
+# ------------------------------------------------------------
+# La 780M est identifiée comme gfx1103 (RDNA3 iGPU, Phoenix).  ROCm 5.7
+# ne liste officiellement que jusqu'à gfx1102.  En simulant gfx1100 les
+# noyaux compilés pour RX 7900 (gfx1100) s'exécutent sans erreur sur
+# gfx1103, les deux partageant la même microarchitecture RDNA3.
+# Gain mesuré sur RealESRGAN (photo 602×596, 9 tuiles 256 px) : ×10 vs CPU.
+os.environ.setdefault("HSA_OVERRIDE_GFX_VERSION", "11.0.0")
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:

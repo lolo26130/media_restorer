@@ -31,23 +31,25 @@ class GFPGANEngine(BaseEngine):
     portraits dégradés.
 
     Architecture :
-      - **Encoder** U-Net extrait les features de l'image dégradée
-      - **Prior facial** (StyleGAN2 gelé) fournit la prior de texture
-      - **SFT layers** (Spatial Feature Transform) fusionnent les deux
-      - **Paste-back** : les visages restaurés sont réinsérés dans l'image
-        originale (zones non-faciales non modifiées)
+
+    - **Encoder** U-Net extrait les features de l'image dégradée
+    - **Prior facial** (StyleGAN2 gelé) fournit la prior de texture
+    - **SFT layers** (Spatial Feature Transform) fusionnent les deux
+    - **Paste-back** : les visages restaurés sont réinsérés dans l'image
+      originale (zones non-faciales non modifiées)
 
     Cas d'usage :
-      - Portraits de famille dégradés ou très flous
-      - Photos argentiques de personnes scannées à faible résolution
-      - Cartes postales et photos d'identité anciennes
+
+    - Portraits de famille dégradés ou très flous
+    - Photos argentiques de personnes scannées à faible résolution
+    - Cartes postales et photos d'identité anciennes
 
     Limitation : inefficace sur paysages, architecture ou objets sans visage —
     préférer Real-ESRGAN ou SwinIR dans ce cas.
 
-    Poids à télécharger : ``GFPGANv1.4.pth``
-      https://github.com/TencentARC/GFPGAN/releases
-    À placer dans : ``models/GFPGANv1.4.pth``
+    Poids : ``GFPGANv1.4.pth`` —
+    https://github.com/TencentARC/GFPGAN/releases
+    (à placer dans ``models/GFPGANv1.4.pth``)
 
     Paramètres
     ----------
