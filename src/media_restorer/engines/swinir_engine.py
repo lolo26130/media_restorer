@@ -68,6 +68,7 @@ class SwinIREngine(BaseEngine):
         if model_path is None:
             model_path = Path(__file__).parents[3] / "models" / _DEFAULT_MODEL
         self._model_path = Path(model_path)
+        self._model: SwinIR | None = None
         if not self._model_path.exists():
             raise FileNotFoundError(
                 f"Poids SwinIR introuvables : {self._model_path}\n"
@@ -77,26 +78,38 @@ class SwinIREngine(BaseEngine):
                 "et le placer dans models/"
             )
 
-    def _build_model(self) -> SwinIR:
-        model = SwinIR(
-            upscale=1, in_chans=3, img_size=128, window_size=_WINDOW_SIZE,
-            img_range=1., depths=[6, 6, 6, 6, 6, 6], embed_dim=180,
-            num_heads=[6, 6, 6, 6, 6, 6], mlp_ratio=2,
-            upsampler='', resi_connection='1conv',
-        )
-        weights = torch.load(str(self._model_path), map_location="cpu")
-        key = next((k for k in ("params_ema", "params") if k in weights), None)
-        model.load_state_dict(weights[key] if key else weights, strict=True)
-        model.eval()
-        return model
+    @property
+    def _get_model(self) -> SwinIR:
+        """Construit le modèle au premier accès et le met en cache."""
+        if self._model is None:
+            gpu = torch.cuda.is_available()
+            device = torch.device("cuda" if gpu else "cpu")
+            model = SwinIR(
+                upscale=1, in_chans=3, img_size=128, window_size=_WINDOW_SIZE,
+                img_range=1., depths=[6, 6, 6, 6, 6, 6], embed_dim=180,
+                num_heads=[6, 6, 6, 6, 6, 6], mlp_ratio=2,
+                upsampler='', resi_connection='1conv',
+            )
+            weights = torch.load(str(self._model_path), map_location="cpu")
+            key = next((k for k in ("params_ema", "params") if k in weights), None)
+            model.load_state_dict(weights[key] if key else weights, strict=True)
+            model.eval()
+            if gpu:
+                model = model.half()
+            self._model = model.to(device)
+        return self._model
 
     def restore_array(self, img: np.ndarray) -> np.ndarray:
-        model = self._build_model()
+        model = self._get_model
+        gpu = next(model.parameters()).is_cuda
+        device = next(model.parameters()).device
 
         # BGR uint8 → RGB float32 [0,1] tensor NCHW
         img_f = img.astype(np.float32) / 255.0
         img_rgb = np.ascontiguousarray(img_f[:, :, ::-1])       # BGR→RGB
-        t = torch.from_numpy(img_rgb.transpose(2, 0, 1)).unsqueeze(0)
+        t = torch.from_numpy(img_rgb.transpose(2, 0, 1)).unsqueeze(0).to(device)
+        if gpu:
+            t = t.half()
 
         # Padding réfléchissant pour que H,W soient multiples de window_size
         _, _, h, w = t.shape
@@ -108,6 +121,6 @@ class SwinIREngine(BaseEngine):
             out = model(t)
 
         # Rognage + RGB float → BGR uint8
-        out = out[:, :, :h, :w].squeeze(0).clamp(0, 1).numpy()
+        out = out[:, :, :h, :w].squeeze(0).clamp(0, 1).float().cpu().numpy()
         out_bgr = (out.transpose(1, 2, 0)[:, :, ::-1] * 255.0).round().astype(np.uint8)
         return out_bgr

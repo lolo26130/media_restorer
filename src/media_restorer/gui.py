@@ -199,6 +199,9 @@ class _BatchRestoreWorker(QThread):
 
         _write_params_toml(out_dir, self._params)
 
+        import torch
+        _gpu = torch.cuda.is_available()
+
         with performance_mode():
             for img_path in images:
                 out_path = out_dir / img_path.relative_to(self._dir)
@@ -210,6 +213,12 @@ class _BatchRestoreWorker(QThread):
                     self.image_done.emit(img_path.name, cpu_elapsed)
                 except Exception as exc:
                     self.file_error.emit(img_path.name, str(exc))
+                if _gpu:
+                    # Attend la fin des kernels GPU puis laisse 50 ms au
+                    # compositor KDE pour ses flips vsync — évite le timeout
+                    # DRM (flip_done timedout) sur iGPU partagé (780M).
+                    torch.cuda.synchronize()
+                    time.sleep(0.05)
         self.all_done.emit(n_success, len(images))
 
 
