@@ -148,6 +148,42 @@ colab/
 └── server.ipynb        # Serveur FastAPI + tunnel cloudflared
 ```
 
+
+## Portabilité sans modification:
+
+    - NVIDIA (CUDA) : fonctionne immédiatement. PyTorch détecte CUDA via torch.cuda.is_available() → GPU activé, FP16 activé. Rien à changer.
+    - AMD discret récent (gfx1100, gfx1030...) : fonctionne avec ROCm officiel, sans le flag HSA_OVERRIDE_GFX_VERSION.
+
+    Le programme a été développé sur gfx1103 / Radeon 780M.
+    Un seul élément est machine-spécifique : le flag dans cli.py :
+    os.environ.setdefault("HSA_OVERRIDE_GFX_VERSION", "11.0.0")
+
+    Ce flag n'est nécessaire que pour les puces non listées officiellement dans ROCm (ici gfx1103 / Radeon 780M). Sur une autre machine il est inoffensif (setdefault ne l'impose pas si la variable est déjà absente — si le GPU est
+    supporté officiellement, ROCm l'ignore).
+
+    Ce qui ne fonctionnera pas
+
+    - GPU Intel Arc : pas supporté par PyTorch ROCm/CUDA → CPU automatiquement
+    - Apple Silicon (MPS) : torch.cuda.is_available() retourne False → CPU. Il faudrait ajouter un chemin torch.backends.mps.is_available() pour en profiter.
+    - AMD très ancien (GCN 1/2) : pas supporté par ROCm 5.7
+
+    Résumé
+
+    ┌───────────────────────────────┬────────────────────────────┐
+    │           GPU cible           │ Résultat sans modification │
+    ├───────────────────────────────┼────────────────────────────┤
+    │ NVIDIA (CUDA)                 │ ✓ GPU complet              │
+    ├───────────────────────────────┼────────────────────────────┤
+    │ AMD récent officiel           │ ✓ GPU complet              │
+    ├───────────────────────────────┼────────────────────────────┤
+    │ AMD non officiel (comme 780M) │ ✓ si même famille RDNA3    │
+    ├───────────────────────────────┼────────────────────────────┤
+    │ Intel Arc                     │ CPU seulement              │
+    ├───────────────────────────────┼────────────────────────────┤
+    │ Apple M-series                │ CPU seulement              │
+    └───────────────────────────────┴────────────────────────────┘
+
+
 ---
 
 ## Licence
