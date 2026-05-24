@@ -78,8 +78,9 @@ def _write_params_toml(out_dir: Path, params: dict) -> None:
 def _image_files(directory: Path, *, recursive: bool) -> list[Path]:
     """Liste triée des images dans *directory*.
 
-    En mode récursif, exclut les sous-répertoires de premier niveau dont le
-    nom correspond à un moteur (sorties de traitements précédents).
+    Exclut tout fichier dont l'un des répertoires parents (entre *directory*
+    et le fichier) porte le nom d'un moteur — quelle que soit la profondeur.
+    Cela évite de retraiter les sorties d'une session précédente.
     """
     candidates = directory.rglob("*") if recursive else directory.iterdir()
     result = []
@@ -87,7 +88,7 @@ def _image_files(directory: Path, *, recursive: bool) -> list[Path]:
         if not p.is_file() or p.suffix.lower() not in _IMAGE_EXTENSIONS:
             continue
         rel = p.relative_to(directory)
-        if recursive and len(rel.parts) > 1 and rel.parts[0] in _ENGINE_NAMES:
+        if _ENGINE_NAMES.intersection(rel.parts[:-1]):
             continue
         result.append(p)
     return sorted(result)
