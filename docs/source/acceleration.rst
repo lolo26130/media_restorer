@@ -180,3 +180,59 @@ Les attributs de connexion (URL, worker) sont **name-mangés** dans
 ``_ColabCalc__url``) pour les isoler des attributs de la fenêtre principale.
 Les méthodes d'accès sont préfixées ``_colab__`` pour matérialiser cette
 frontière dans le code.
+
+
+Traitement par lot — stabilité et progression
+---------------------------------------------
+
+Prévention du crash DRM sur iGPU (flip_done timedout)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Sur un iGPU partagé (AMD Radeon 780M, et de façon générale tout GPU
+intégré), le compositor KDE (KWin) et PyTorch/ROCm se disputent le même
+silicium.  Lors d'un traitement de répertoire en rafale, PyTorch monopolise
+la file de commandes GPU pendant plusieurs minutes ; KDE dépasse alors le
+délai d'attente pour ses rafraîchissements d'écran (*vsync flip*) et le
+driver DRM panique :
+
+.. code-block:: none
+
+    amdgpu 0000:65:00.0: [drm] *ERROR* flip_done timedout
+    amdgpu 0000:65:00.0: [drm] *ERROR* [CRTC:88:crtc-2] commit wait timed out
+
+**Correction appliquée dans** :class:`~media_restorer.gui._BatchRestoreWorker` :
+
+- ``torch.cuda.synchronize()`` — vide la file de kernels GPU après chaque
+  image (sans cela les kernels ROCm se cumulent en mémoire tampon)
+- ``time.sleep(0.05)`` — pause de 50 ms (~3 cycles vsync à 60 Hz) pour que
+  KWin puisse effectuer ses flips d'affichage avant l'image suivante
+
+Le surcoût est négligeable (< 2 % sur des images de plusieurs secondes).
+
+**Correctif noyau recommandé** — ajouter dans ``/etc/default/grub`` ::
+
+    GRUB_CMDLINE_LINUX_DEFAULT="... amdgpu.gpu_recovery=1"
+
+puis ``sudo update-grub`` et redémarrage.  Ce paramètre active la
+récupération automatique du GPU en cas de timeout résiduel, évitant le crash
+de session même si la pause ne suffit pas.
+
+Exclusion des sorties précédentes
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Le worker de lot détecte et ignore automatiquement tout fichier situé dans
+un sous-répertoire portant le nom d'un moteur (``Real-ESRGAN/``,
+``SwinIR/``, ``LaMa/``, ``GFPGAN/``), quelle que soit leur profondeur dans
+l'arborescence.  Les images déjà restaurées ne sont donc jamais retraitées.
+
+Progression en temps réel
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+La barre de statut affiche après chaque image :
+
+.. code-block:: none
+
+    3 / 12 images  —  moy. 4.2 s/img  —  photo_007.jpg
+
+Le temps affiché est le **temps réel** (horloge murale), qui inclut le calcul
+GPU contrairement à ``time.process_time()`` qui n'aurait mesuré que le CPU.

@@ -168,6 +168,29 @@ class _RestoreWorker(QThread):
 
 
 class _BatchRestoreWorker(QThread):
+    """Worker de traitement par lot d'un répertoire d'images.
+
+    Signaux émis
+    ------------
+    image_done(filename, wall_seconds)
+        Après chaque image réussie — durée réelle (horloge murale, GPU inclus).
+    file_error(filename, message)
+        En cas d'échec sur une image individuelle (le lot continue).
+    all_done(n_success, n_total)
+        À la fin du lot, quel que soit le nombre d'erreurs.
+
+    Prévention du crash DRM (iGPU AMD)
+    ------------------------------------
+    Sur un iGPU partagé (ex. Radeon 780M), PyTorch et le compositor KDE se
+    disputent le même GPU.  Un traitement en rafale sans pause sature la file
+    de commandes GPU et provoque des timeouts DRM (``flip_done timedout``),
+    pouvant crasher la session graphique.
+
+    Après chaque image, ``torch.cuda.synchronize()`` vide la file GPU, puis
+    une pause de 50 ms laisse au compositor le temps d'effectuer ses flips
+    vsync (~3 cycles à 60 Hz) avant l'image suivante.
+    """
+
     image_done = pyqtSignal(str, float)  # filename, wall_seconds
     all_done   = pyqtSignal(int, int)    # n_success, n_total
     file_error = pyqtSignal(str, str)    # filename, message

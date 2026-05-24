@@ -55,6 +55,21 @@ class SwinIREngine(BaseEngine):
     - Nettoyage doux sans perte de détail sur paysages et architectures
     - Premier passage avant un agrandissement Real-ESRGAN
 
+    Stratégie GPU
+    -------------
+    Le modèle est construit une seule fois au premier appel de
+    ``restore_array`` via la propriété ``_get_model``, puis conservé dans
+    ``self._model`` pour toute la durée de vie de l'instance (même stratégie
+    que :class:`~media_restorer.engines.realesrgan_engine.RealESRGANEngine`).
+
+    Le device est choisi automatiquement :
+
+    - ``torch.cuda.is_available()`` → True  : GPU (ROCm ou CUDA), modèle en FP16
+    - ``torch.cuda.is_available()`` → False : CPU, modèle en FP32
+
+    Le tenseur d'entrée est transféré sur le même device que le modèle ;
+    la sortie est ramenée sur CPU avant conversion NumPy.
+
     Poids : ``005_colorDN_DFWB_s128w8_SwinIR-M_noise25.pth`` —
     https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/005_colorDN_DFWB_s128w8_SwinIR-M_noise25.pth
     (à placer dans ``models/005_colorDN_DFWB_s128w8_SwinIR-M_noise25.pth``)
