@@ -13,6 +13,13 @@ from media_restorer.engines.base import BaseEngine
 
 _DEFAULT_MODEL = "RealESRGAN_x4plus.pth"
 _DEFAULT_SCALE = 4
+# Scale d'architecture figée par les poids RealESRGAN_x4plus.pth : RRDBNet
+# multiplie num_in_ch par 4 (scale=2) ou 16 (scale=1) via pixel-unshuffle
+# (basicsr/archs/rrdbnet_arch.py) — un mismatch avec la scale d'entraînement
+# du checkpoint casse conv_first ("size mismatch"). Le paramètre `scale`
+# de ce moteur ne doit donc jamais piloter l'architecture : il est appliqué
+# en aval, via `outscale` (resize final géré par RealESRGANer.enhance()).
+_ARCH_SCALE = 4
 
 
 class RealESRGANEngine(BaseEngine):
@@ -25,7 +32,13 @@ class RealESRGANEngine(BaseEngine):
     U-Net pour produire des textures fines et réalistes.
 
     Caractéristiques du modèle utilisé (RealESRGAN_x4plus.pth) :
-      - Facteur d'agrandissement configurable (1 × à 8 ×, défaut 4 ×)
+      - Facteur d'agrandissement configurable (1 × à 8 ×, défaut 4 ×) —
+        appliqué en aval du réseau (``outscale``, resize final), *jamais*
+        sur l'architecture : RRDBNet est toujours construit avec
+        ``scale=4`` pour correspondre aux poids chargés (voir
+        ``_ARCH_SCALE``). Construire le réseau avec une autre scale change
+        le nombre de canaux attendu par ``conv_first`` (pixel-unshuffle) et
+        casse le chargement du checkpoint ("size mismatch").
       - Traitement par tuiles (tile) pour contrôler l'empreinte mémoire
 
     Cas d'usage :
@@ -114,10 +127,10 @@ class RealESRGANEngine(BaseEngine):
             gpu = torch.cuda.is_available()
             model = RRDBNet(
                 num_in_ch=3, num_out_ch=3, num_feat=64,
-                num_block=23, num_grow_ch=32, scale=self._scale,
+                num_block=23, num_grow_ch=32, scale=_ARCH_SCALE,
             )
             self._upsampler = RealESRGANer(
-                scale=self._scale,
+                scale=_ARCH_SCALE,
                 model_path=str(self._model_path),
                 model=model,
                 tile=self._tile, tile_pad=10, pre_pad=0,
