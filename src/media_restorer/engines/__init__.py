@@ -50,6 +50,14 @@ ENGINE_PARAMS: dict[Engine, list[dict]] = {
             "name": "dilate_px", "title": "Dilatation du masque (px)",
             "type": "int", "value": 4, "limits": (0, 20), "step": 1,
         },
+        {
+            "name": "tile", "title": "Taille de tuile (px)",
+            "type": "int", "value": 1024, "limits": (0, 4096), "step": 32,
+        },
+        {
+            "name": "tile_pad", "title": "Recouvrement de tuile (px)",
+            "type": "int", "value": 100, "limits": (0, 512), "step": 8,
+        },
     ],
     Engine.GFPGAN: [
         {
