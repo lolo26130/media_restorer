@@ -201,6 +201,53 @@ def test_preview_refreshes_the_window_in_every_mode(window, dual_root, mode):
     assert "aperçu" in result_window.windowTitle()
 
 
+def _displayed_area(result_window):
+    """Aire couverte par l'image dans le repère de la vue."""
+    item = result_window._view.imageItem
+    return item.mapRectToView(item.boundingRect())
+
+
+def test_preview_covers_the_same_area_as_the_full_resolution_result(window, dual_root):
+    """L'aperçu réduit doit occuper la même aire que le résultat plein cadre.
+
+    Régression : l'aperçu (1068×1600) était dessiné dans un viewport cadré
+    pour l'image pleine résolution (4910×7358).  Il changeait bien, mais
+    4,6× plus petit et dans un coin — hors du champ regardé, d'où
+    l'impression que le slider n'agissait pas sur l'image.
+    """
+    full = np.zeros((2400, 1600, 3), dtype=np.uint8)
+    window._on_pair_ready(_pair(2400, 1600))
+    result_window = window._result_windows[Engine.DUAL]
+    result_window.show_image(full)                    # plein cadre, autoRange
+    before = _displayed_area(result_window)
+    dual_root.child("mode").setValue(MODE_FONDU)
+
+    window._refresh_dual_preview()
+
+    after = _displayed_area(result_window)
+    assert result_window._view.image.shape[:2] != full.shape[:2], "aperçu bien réduit"
+    assert after.width()  == pytest.approx(before.width(),  rel=0.01)
+    assert after.height() == pytest.approx(before.height(), rel=0.01)
+    assert after.left()   == pytest.approx(before.left(),   abs=1.0)
+    assert after.top()    == pytest.approx(before.top(),    abs=1.0)
+
+
+def test_full_resolution_result_clears_the_preview_stretch(window, dual_root):
+    """Revenir en pleine résolution annule l'étirement de l'aperçu."""
+    window._on_pair_ready(_pair(2400, 1600))
+    result_window = window._result_windows[Engine.DUAL]
+    result_window.show_image(np.zeros((2400, 1600, 3), dtype=np.uint8))
+    dual_root.child("mode").setValue(MODE_FONDU)
+    window._refresh_dual_preview()
+
+    window._pending_engine = Engine.DUAL
+    window._on_restore_done(np.zeros((2400, 1600, 3), dtype=np.uint8))
+
+    area = _displayed_area(result_window)
+    assert area.width()  == pytest.approx(1600, rel=0.01)
+    assert area.height() == pytest.approx(2400, rel=0.01)
+
+
 def test_preview_does_not_pass_itself_off_as_a_saveable_result(window):
     """L'aperçu étant réduit, il n'alimente pas « Enregistrer »."""
     window._on_pair_ready(_pair(600, 400))

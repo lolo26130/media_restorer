@@ -162,21 +162,36 @@ class ResultWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
 
-    def update_image(self, img_bgr: np.ndarray) -> None:
+    def update_image(
+        self, img_bgr: np.ndarray, scale: tuple[float, float] | None = None
+    ) -> None:
         """Remplace l'image sans reprendre le focus ni recadrer la vue.
 
-        Utilisé par le fondu interactif de l'onglet Double-exposition : pendant
-        que l'utilisateur déplace le slider, reprendre le focus le lui
+        Utilisé par l'aperçu interactif de l'onglet Double-exposition : pendant
+        que l'utilisateur déplace un slider, reprendre le focus le lui
         arracherait et un ``autoRange`` annulerait son zoom à chaque cran.
         Sans effet si la fenêtre n'est pas déjà visible.
+
+        *scale* étire l'image sur l'aire qu'elle doit occuper dans la vue.
+        Indispensable pour un aperçu en résolution réduite : sans lui, une
+        image plus petite se dessine dans un coin du cadrage précédent — elle
+        change bien, mais hors du champ regardé, ce qui donne l'impression
+        que le slider n'agit pas.
         """
         if self.isVisible():
-            self._set_image(img_bgr, auto_range=False)
+            self._set_image(img_bgr, auto_range=False, scale=scale)
 
-    def _set_image(self, img_bgr: np.ndarray, auto_range: bool) -> None:
+    def _set_image(
+        self,
+        img_bgr: np.ndarray,
+        auto_range: bool,
+        scale: tuple[float, float] | None = None,
+    ) -> None:
         rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB) if img_bgr.ndim == 3 else img_bgr
+        # scale=None → pyqtgraph applique une transformation identité, ce qui
+        # annule l'étirement d'un aperçu précédent.
         self._view.setImage(
-            rgb, autoLevels=False, levels=(0, 255), autoRange=auto_range
+            rgb, autoLevels=False, levels=(0, 255), autoRange=auto_range, scale=scale
         )
 
 
@@ -872,11 +887,16 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
             self.statusBar().showMessage(f"Aperçu impossible : {exc}")
             return
 
+        # L'aperçu est plus petit que le résultat pleine résolution : on
+        # l'étire sur la même aire, sinon il se dessine dans un coin du
+        # cadrage courant et paraît ne pas réagir.
+        full_h, full_w = self._dual_pair[0].shape[:2]
+        prev_h, prev_w = result.shape[:2]
         window = self._result_windows[Engine.DUAL]
         window.setWindowTitle(
-            f"{Engine.DUAL.value} — aperçu {result.shape[1]}×{result.shape[0]}"
+            f"{Engine.DUAL.value} — aperçu {prev_w}×{prev_h}"
         )
-        window.update_image(result)
+        window.update_image(result, scale=(full_w / prev_w, full_h / prev_h))
         self._restored = None
         self._ui.actionSave.setEnabled(False)
         self.statusBar().showMessage(
