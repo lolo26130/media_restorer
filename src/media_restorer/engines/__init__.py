@@ -28,7 +28,14 @@ ENGINE_PARAMS: dict[Engine, list[dict]] = {
         },
     ],
     Engine.SWINIR: [
-        # Modèle fixe (débruiteur noise=25) — aucun paramètre utilisateur
+        {
+            "name": "tile", "title": "Taille de tuile (px)",
+            "type": "int", "value": 400, "limits": (0, 2000), "step": 32,
+        },
+        {
+            "name": "tile_pad", "title": "Recouvrement de tuile (px)",
+            "type": "int", "value": 16, "limits": (0, 128), "step": 8,
+        },
     ],
     Engine.LAMA: [
         {

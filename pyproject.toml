@@ -51,7 +51,7 @@ build-backend = "uv_build"
 [tool.uv.sources]
 torch = [{ index = "pytorch-rocm" }]
 torchvision = [{ index = "pytorch-rocm" }]
-OutilsQt = { path = "../OutilsQt", editable = true }
+OutilsQt = { path = "/home/laurent/Documents/Python/aaa_modules/OutilsQt", editable = true }
 
 [[tool.uv.index]]
 name = "pytorch-rocm"

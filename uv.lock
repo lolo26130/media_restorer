@@ -826,7 +826,7 @@ requires-dist = [
     { name = "myst-parser", marker = "extra == 'docs'", specifier = ">=3.0" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "opencv-python", specifier = ">=4.9" },
-    { name = "outilsqt", editable = "../OutilsQt" },
+    { name = "outilsqt", editable = "/home/laurent/Documents/Python/aaa_modules/OutilsQt" },
     { name = "pillow", specifier = ">=10.0" },
     { name = "pyqt6", specifier = ">=6.6" },
     { name = "pyqtgraph", specifier = ">=0.13" },
@@ -1013,7 +1013,7 @@ wheels = [
 [[package]]
 name = "outilsqt"
 version = "1.0"
-source = { editable = "../OutilsQt" }
+source = { editable = "/home/laurent/Documents/Python/aaa_modules/OutilsQt" }
 
 [[package]]
 name = "packaging"

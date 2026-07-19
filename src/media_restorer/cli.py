@@ -23,6 +23,10 @@ from pathlib import Path
 # noyaux compilés pour RX 7900 (gfx1100) s'exécutent sans erreur sur
 # gfx1103, les deux partageant la même microarchitecture RDNA3.
 # Gain mesuré sur RealESRGAN (photo 602×596, 9 tuiles 256 px) : ×10 vs CPU.
+#
+# RÉACTIVÉ (2026-07-19) : les plantages graphiques observés depuis le
+# 1er juin étaient dus à un adaptateur USB-C d'écran externe peu fiable,
+# pas à ce forçage — cause confirmée et écartée.
 os.environ.setdefault("HSA_OVERRIDE_GFX_VERSION", "11.0.0")
 
 
