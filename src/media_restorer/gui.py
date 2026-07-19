@@ -49,6 +49,33 @@ pg.setConfigOption("imageAxisOrder", "row-major")
 
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp"}
 
+# Onglet Double-exposition : paramètres qui déclenchent un recalcul de l'aperçu.
+# « second_path » et « align » en sont exclus — ils invalident le recalage
+# lui-même, qui n'est refait que par « Restaurer ».
+_DUAL_LIVE_PARAMS = (
+    "mode", "alpha", "match_levels",
+    "detail_base", "detail_radius", "detail_gain",
+    "w_contrast", "w_exposure",
+)
+
+# Paramètres n'ayant d'effet que dans certains modes → grisés ailleurs.
+# Rempli à l'import depuis dual_engine pour éviter de dupliquer les libellés.
+def _dual_param_modes() -> dict[str, str]:
+    from media_restorer.engines.dual_engine import (
+        MODE_DETAIL, MODE_FONDU, MODE_FUSION,
+    )
+    return {
+        "alpha":         MODE_FONDU,
+        "detail_base":   MODE_DETAIL,
+        "detail_radius": MODE_DETAIL,
+        "detail_gain":   MODE_DETAIL,
+        "w_contrast":    MODE_FUSION,
+        "w_exposure":    MODE_FUSION,
+    }
+
+# Côté max de l'aperçu interactif, en pixels (cf. mesures dans __init__).
+_DUAL_PREVIEW_MAX = 1600
+
 # Noms des sous-répertoires de sortie à exclure lors d'un parcours récursif.
 _ENGINE_NAMES: frozenset[str] = frozenset(e.value for e in Engine)
 
@@ -450,18 +477,32 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
             tab_widget.addTab(tree, engine.value)
             self._result_windows[engine] = ResultWindow(engine.value)
 
-        # ── Fondu interactif (onglet Double-exposition) ───────────────────
-        # Le recalage est fait une seule fois par « Restaurer » ; ensuite le
-        # slider ne recalcule qu'un addWeighted sur le couple mémorisé.
+        # ── Aperçu interactif (onglet Double-exposition) ──────────────────
+        # Le recalage n'est fait qu'au « Restaurer » ; ensuite tout changement
+        # de paramètre rejoue la seule fusion, sur une réduction du couple
+        # mémorisé.  Mesuré sur un couple 36 Mpx : à pleine résolution le mode
+        # « détail » demande 1,8 s et « fusion » 5,4 s — inutilisable au
+        # slider ; réduit à _DUAL_PREVIEW_MAX px, aucun mode ne dépasse 0,15 s.
         # Un timer anti-rebond évite d'empiler un recalcul par cran de slider.
-        self._dual_pair: tuple[np.ndarray, np.ndarray] | None = None
+        self._dual_pair:    tuple[np.ndarray, np.ndarray] | None = None
+        self._dual_preview: tuple[np.ndarray, np.ndarray] | None = None
         self._dual_timer = QTimer(self)
         self._dual_timer.setSingleShot(True)
         self._dual_timer.setInterval(150)
-        self._dual_timer.timeout.connect(self._refresh_dual_blend)
-        self._param_roots[Engine.DUAL].child("alpha").sigValueChanged.connect(
-            lambda *_: self._dual_timer.start()
+        self._dual_timer.timeout.connect(self._refresh_dual_preview)
+
+        dual_root = self._param_roots[Engine.DUAL]
+        for name in _DUAL_LIVE_PARAMS:
+            dual_root.child(name).sigValueChanged.connect(
+                lambda *_: self._dual_timer.start()
+            )
+        # Griser les paramètres sans effet dans le mode courant : sans cela le
+        # slider « fondu » paraît actif alors qu'aucun mode sauf « fondu » ne
+        # le consomme — c'est exactement ce qui prête à confusion.
+        dual_root.child("mode").sigValueChanged.connect(
+            lambda *_: self._sync_dual_param_states()
         )
+        self._sync_dual_param_states()
 
         # Combo récursif + container
         self._combo_recursive = QComboBox()
@@ -745,7 +786,7 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
         self.statusBar().showMessage(
             f"Restauration en cours ({self._pending_engine.value})…"
         )
-        self._dual_pair = None
+        self._dual_pair = self._dual_preview = None
         self._worker = _RestoreWorker(
             self._original, self._pending_engine, self._model_path, params
         )
@@ -755,37 +796,100 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
         self._worker.start()
 
     def _on_pair_ready(self, pair: object) -> None:
-        """Mémorise le couple recalé émis par le moteur Double-exposition."""
-        self._dual_pair = pair  # type: ignore[assignment]
+        """Mémorise le couple recalé émis par le moteur Double-exposition.
 
-    def _refresh_dual_blend(self) -> None:
-        """Recalcule le fondu après un mouvement du slider ``alpha``.
-
-        N'agit qu'en mode « fondu » et seulement si un couple recalé est déjà
-        en mémoire — sinon le slider n'a rien à interpoler et il faut passer
-        par « Restaurer ».  Le recalage n'est pas refait : seul un
-        ``addWeighted`` est recalculé, ce qui reste interactif même en pleine
-        résolution.
+        En conserve aussi une réduction, base de l'aperçu interactif : elle
+        n'est calculée qu'ici (≈ 0,02 s), pas à chaque mouvement de slider.
         """
-        from media_restorer.engines.dual_engine import MODE_FONDU, DualExposureEngine
-        if self._dual_pair is None:
+        img_a, img_b = pair  # type: ignore[misc]
+        self._dual_pair = (img_a, img_b)
+        scale = _DUAL_PREVIEW_MAX / max(img_a.shape[:2])
+        if scale >= 1.0:
+            self._dual_preview = (img_a, img_b)
+        else:
+            self._dual_preview = tuple(
+                cv2.resize(i, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+                for i in (img_a, img_b)
+            )
+
+    # Options que SliderParameterItem.optsChanged relit pour reconstruire son
+    # échelle, et qu'il faut donc lui redonner à chaque changement d'option.
+    _SLIDER_SCALE_OPTS = ("step", "limits", "precision")
+
+    @classmethod
+    def _set_param_enabled(cls, param: Parameter, enabled: bool) -> None:
+        """Active/désactive *param* sans casser l'échelle d'un slider.
+
+        ``Parameter.setOpts`` ne propage que les options **dont la valeur
+        change**, et ``SliderParameterItem.optsChanged`` reconstruit le
+        « span » du slider à chaque notification en relisant le pas dans le
+        dictionnaire *partiel* reçu, avec un défaut de 1.  Un
+        ``setOpts(enabled=…)`` réduisait donc le slider 0–1 de 101 crans à
+        deux (``arange(0, 2, 1)``) : il sautait de 0 à 1, et la valeur
+        courante était écrasée au passage.  Relayer ``step`` à ``setOpts`` ne
+        suffit pas — inchangé, il est justement filtré avant d'être transmis.
+
+        On pose donc l'option puis on émet soi-même la notification, en y
+        réinjectant les options d'échelle pour que la reconstruction soit
+        fidèle.
+        """
+        if param.opts.get("enabled", True) == enabled:
+            return
+        param.opts["enabled"] = enabled
+        changed = {"enabled": enabled}
+        changed.update(
+            (k, param.opts[k]) for k in cls._SLIDER_SCALE_OPTS if k in param.opts
+        )
+        param.sigOptionsChanged.emit(param, changed)
+
+    def _sync_dual_param_states(self) -> None:
+        """Grise les paramètres sans effet dans le mode de fusion courant."""
+        root = self._param_roots[Engine.DUAL]
+        mode = root.child("mode").value()
+        for name, required_mode in _dual_param_modes().items():
+            self._set_param_enabled(root.child(name), mode == required_mode)
+
+    def _refresh_dual_preview(self) -> None:
+        """Recalcule l'aperçu après un changement de paramètre de fusion.
+
+        Rejoue ``DualExposureEngine.fuse`` — donc exactement le calcul de
+        production — sur la **réduction** du couple recalé : tous les modes
+        répondent alors en moins de 0,15 s, là où « fusion (Mertens) »
+        demanderait 5,4 s en pleine résolution.
+
+        L'aperçu étant en résolution réduite, il ne remplace pas
+        ``self._restored`` et « Enregistrer » est désactivé : c'est
+        « Restaurer » qui produit le résultat pleine résolution enregistrable.
+        Le titre de la fenêtre de résultat le signale.
+        """
+        if self._dual_preview is None:
             return
         params = self._read_params(Engine.DUAL)
-        if params.get("mode") != MODE_FONDU:
+        engine = build_engine(Engine.DUAL, self._model_path, params)
+        try:
+            result = engine.fuse(*self._dual_preview)  # type: ignore[attr-defined]
+        except Exception as exc:
+            self.statusBar().showMessage(f"Aperçu impossible : {exc}")
             return
-        alpha  = float(params["alpha"])
-        img_a, img_b = self._dual_pair
-        result = DualExposureEngine.blend(img_a, img_b, alpha)
-        self._restored = result
-        self._result_windows[Engine.DUAL].update_image(result)
-        self._ui.actionSave.setEnabled(True)
+
+        window = self._result_windows[Engine.DUAL]
+        window.setWindowTitle(
+            f"{Engine.DUAL.value} — aperçu {result.shape[1]}×{result.shape[0]}"
+        )
+        window.update_image(result)
+        self._restored = None
+        self._ui.actionSave.setEnabled(False)
         self.statusBar().showMessage(
-            f"Fondu — {1 - alpha:.0%} image 1 / {alpha:.0%} image 2"
+            f"Aperçu « {params['mode']} » en résolution réduite "
+            "— « Restaurer » pour la pleine résolution."
         )
 
     def _on_restore_done(self, result: np.ndarray) -> None:
         self._restored = result
         win = self._result_windows[self._pending_engine]
+        # Efface un éventuel suffixe « aperçu » laissé par _refresh_dual_preview :
+        # ce résultat-ci est bien en pleine résolution.
+        win.setWindowTitle(self._pending_engine.value)
         self._register_window(win)
         win.show_image(result)
         self._ui.actionSave.setEnabled(True)

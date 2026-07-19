@@ -317,8 +317,20 @@ class DualExposureEngine(BaseEngine):
         fused = merge.process([img_a, img_b])
         return np.clip(fused * 255.0, 0, 255).astype(np.uint8)
 
+    def fuse(self, img_a: np.ndarray, img_b: np.ndarray) -> np.ndarray:
+        """Harmonisation des niveaux puis fusion, sur un couple **déjà recalé**.
+
+        Tout ce qui suit le recalage.  ``restore_array`` l'appelle sur le
+        couple pleine résolution ; la GUI l'appelle sur une version réduite
+        pour l'aperçu interactif — les deux empruntent ainsi exactement le
+        même chemin de calcul, seule la taille change.
+        """
+        if self._match_levels:
+            img_b = self.match_levels(img_a, img_b)
+        return self.combine(img_a, img_b)
+
     def combine(self, img_a: np.ndarray, img_b: np.ndarray) -> np.ndarray:
-        """Fusionne un couple **déjà recalé** selon ``mode``."""
+        """Fusionne un couple **déjà recalé et harmonisé** selon ``mode``."""
         if self._mode == MODE_FONDU:
             return self.blend(img_a, img_b, self._alpha)
         if self._mode == MODE_DETAIL:
@@ -402,9 +414,9 @@ class DualExposureEngine(BaseEngine):
 
         if self._align:
             img_a, img_b = self.align_pair(img_a, img_b)
-        if self._match_levels:
-            img_b = self.match_levels(img_a, img_b)
 
-        # Conservé pour le fondu interactif de la GUI (voir docstring de classe).
+        # Mémorisé *avant* l'harmonisation des niveaux et la fusion : la GUI
+        # rejoue ``fuse`` sur une réduction de ce couple à chaque changement de
+        # paramètre, sans refaire le recalage (voir docstring de classe).
         self.aligned_pair = (img_a, img_b)
-        return self.combine(img_a, img_b)
+        return self.fuse(img_a, img_b)
