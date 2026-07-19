@@ -20,6 +20,7 @@ import cv2
 import numpy as np
 
 from media_restorer.engines.base import BaseEngine
+from media_restorer.image_io import imread_oriented
 
 # Modes de fusion — l'ordre est celui proposé dans le ParameterTree.
 MODE_FONDU  = "fondu"
@@ -334,6 +335,27 @@ class DualExposureEngine(BaseEngine):
     # Chargement de la seconde image
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _as_bgr8(img: np.ndarray) -> np.ndarray:
+        """Normalise *img* en BGR 8 bits, 3 canaux.
+
+        La fenêtre principale charge l'image avec ``IMREAD_UNCHANGED`` : elle
+        peut donc arriver en niveaux de gris, en BGRA (PNG à canal alpha) ou
+        en 16 bits par canal.  Toute l'arithmétique de fusion suppose du BGR
+        8 bits sur 0–255.
+        """
+        if img.dtype == np.uint16:
+            img = (img // 257).astype(np.uint8)
+        elif img.dtype != np.uint8:
+            img = np.clip(img, 0, 255).astype(np.uint8)
+        if img.ndim == 2:
+            return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        if img.shape[2] == 1:
+            return cv2.cvtColor(img[:, :, 0], cv2.COLOR_GRAY2BGR)
+        if img.shape[2] == 4:
+            return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+        return img
+
     def _load_second(self, img_a: np.ndarray) -> np.ndarray:
         """Charge la 2ᵉ image et vérifie sa compatibilité avec *img_a*."""
         if not self._second_path:
@@ -345,16 +367,27 @@ class DualExposureEngine(BaseEngine):
         path = Path(self._second_path)
         if not path.exists():
             raise ValueError(f"2ᵉ image introuvable : {path}")
-        img_b = cv2.imread(str(path), cv2.IMREAD_COLOR)
+        # imread_oriented applique l'orientation EXIF, exactement comme le
+        # chargement de l'image 1 par la fenêtre principale : sans cela, un
+        # boîtier écrivant Orientation=6 livrerait ici une image transposée
+        # par rapport à l'image 1.  IMREAD_COLOR garantit par ailleurs 3 canaux.
+        img_b = imread_oriented(path, cv2.IMREAD_COLOR)
         if img_b is None:
             raise ValueError(f"Impossible de lire la 2ᵉ image : {path}")
         if img_b.shape[:2] != img_a.shape[:2]:
+            transposed = img_b.shape[:2][::-1] == img_a.shape[:2]
+            detail = (
+                "\n\nLes dimensions sont exactement échangées : l'un des deux "
+                "clichés est tourné de 90° par rapport à l'autre. Les remettre "
+                "dans le même sens avant de les fusionner."
+                if transposed else
+                "\n\n(Ce moteur ne corrige qu'une translation, pas un "
+                "changement d'échelle ni une rotation.)"
+            )
             raise ValueError(
                 "Les deux clichés doivent avoir la même taille — "
                 f"image 1 : {img_a.shape[1]}×{img_a.shape[0]}, "
-                f"image 2 : {img_b.shape[1]}×{img_b.shape[0]}.\n"
-                "(Ce moteur ne corrige qu'une translation, pas un changement "
-                "d'échelle ni une rotation.)"
+                f"image 2 : {img_b.shape[1]}×{img_b.shape[0]}." + detail
             )
         return img_b
 
@@ -364,8 +397,8 @@ class DualExposureEngine(BaseEngine):
 
     def restore_array(self, img: np.ndarray) -> np.ndarray:
         """Fusionne *img* (cliché 1) avec le cliché 2 désigné par ``second_path``."""
-        img_a = img if img.ndim == 3 else cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-        img_b = self._load_second(img_a)
+        img_a = self._as_bgr8(img)
+        img_b = self._as_bgr8(self._load_second(img_a))
 
         if self._align:
             img_a, img_b = self.align_pair(img_a, img_b)

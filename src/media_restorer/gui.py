@@ -41,6 +41,7 @@ from PyQt6.QtWidgets import (
 from media_restorer.colab_calc import ColabCalc
 from media_restorer.engines import ENGINE_PARAMS, Engine, build_engine
 from media_restorer.download_models import MODEL_REGISTRY
+from media_restorer.image_io import imread_oriented
 from media_restorer.power import performance_mode
 from OutilsQt.Utils_Qt import compile_ui, compile_qrc, tooltips_from_code
 
@@ -718,7 +719,7 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
         )
         if not path:
             return
-        img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+        img = imread_oriented(path)
         if img is None:
             QMessageBox.critical(self, "Erreur", f"Impossible de lire : {path}")
             return

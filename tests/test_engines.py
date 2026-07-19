@@ -384,3 +384,75 @@ def test_build_engine_dual_forwards_params(tmp_path):
     assert isinstance(engine, DualExposureEngine)
     assert engine._mode == dual_mod.MODE_MIN
     assert engine._alpha == 0.25
+
+
+def _write_jpeg_with_exif_orientation(path, img, orientation=6):
+    """Écrit *img* en JPEG en y posant un tag EXIF Orientation.
+
+    Reproduit ce que produit un boîtier tenu verticalement : les pixels sont
+    stockés en paysage et l'EXIF demande une rotation de 90°.
+    """
+    from PIL import Image
+    pil = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+    exif = pil.getexif()
+    exif[274] = orientation                     # 274 = Orientation
+    pil.save(str(path), "JPEG", exif=exif, quality=95)
+
+
+def test_dual_second_image_ignores_exif_orientation_like_the_gui(tmp_path):
+    """La 2ᵉ image est lue avec la même convention EXIF que la fenêtre principale.
+
+    Régression : la GUI et le moteur lisaient la même photo avec des drapeaux
+    OpenCV traitant l'orientation EXIF différemment.  Sur un fichier
+    Orientation=6 les deux clichés arrivaient transposés l'un par rapport à
+    l'autre et la fusion échouait.  Les deux passent désormais par
+    :func:`~media_restorer.image_io.imread_oriented`.
+    """
+    img = _textured(120, 200)                   # non carrée : la transposition se voit
+    first  = tmp_path / "a.jpg"
+    second = tmp_path / "b.jpg"
+    _write_jpeg_with_exif_orientation(first, img)
+    _write_jpeg_with_exif_orientation(second, img)
+
+    # Exactement ce que fait PhotoRestorationGUI._load_image
+    from media_restorer.image_io import imread_oriented
+    img_a = imread_oriented(first)
+    assert img_a.shape[:2] == (200, 120)         # redressé : 120×200 sur le disque
+    # align=False pour isoler la question de l'orientation du rognage de recalage
+    engine = DualExposureEngine(
+        second_path=str(second), mode=dual_mod.MODE_FONDU, align=False
+    )
+
+    result = engine.restore_array(img_a)         # ne doit pas lever
+
+    assert result.shape[:2] == img_a.shape[:2]
+    # Les deux clichés étant issus des mêmes pixels, le fondu doit les
+    # retrouver identiques — ce qui ne serait pas le cas si l'un était tourné.
+    assert np.abs(result.astype(int) - img_a.astype(int)).mean() < 2.0
+
+
+def test_dual_size_mismatch_names_the_rotation_case(tmp_path):
+    """Des dimensions échangées sont signalées comme une rotation de 90°."""
+    second = tmp_path / "b.png"
+    cv2.imwrite(str(second), _textured(200, 120))
+    engine = DualExposureEngine(second_path=str(second))
+
+    with pytest.raises(ValueError, match="tourné de 90"):
+        engine.restore_array(_textured(120, 200))
+
+
+@pytest.mark.parametrize("make, label", [
+    (lambda: cv2.cvtColor(_textured(64, 64), cv2.COLOR_BGR2GRAY), "niveaux de gris"),
+    (lambda: cv2.cvtColor(_textured(64, 64), cv2.COLOR_BGR2BGRA), "BGRA"),
+    (lambda: (_textured(64, 64).astype(np.uint16) * 257), "16 bits"),
+])
+def test_dual_accepts_unusual_pixel_formats(tmp_path, make, label):
+    """IMREAD_UNCHANGED peut livrer du gris, du BGRA ou du 16 bits : tous acceptés."""
+    second = tmp_path / "b.png"
+    cv2.imwrite(str(second), _textured(64, 64))
+    engine = DualExposureEngine(second_path=str(second), mode=dual_mod.MODE_FONDU)
+
+    result = engine.restore_array(make())
+
+    assert result.dtype == np.uint8, label
+    assert result.ndim == 3 and result.shape[2] == 3, label
