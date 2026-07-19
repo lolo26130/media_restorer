@@ -5,7 +5,8 @@ media_restorer — PyQt6, restauration photo
 
 Architecture
 - gui.py          → fenêtre principale PhotoRestorationGUI
-- engines/        → RealESRGAN, SwinIR, LaMa, GFPGAN (héritent de BaseEngine)
+- engines/        → RealESRGAN, SwinIR, LaMa, GFPGAN, DualExposure (héritent de BaseEngine)
+                    DualExposure = fusion front light / back light, sans réseau (OpenCV pur)
 - download_models.py → téléchargement des poids (MODEL_REGISTRY)
 - views/main.ui   → compilé automatiquement via compile_ui()
 - OutilsQt/Utils_Qt.py → compile_ui, compile_qrc, tooltips_from_code

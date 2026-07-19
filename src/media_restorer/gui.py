@@ -17,7 +17,7 @@ import cv2
 import numpy as np
 import pyqtgraph as pg
 from pyqtgraph.parametertree import Parameter, ParameterTree
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QApplication,
@@ -129,11 +129,27 @@ class ResultWindow(QMainWindow):
         self.setCentralWidget(self._view)
 
     def show_image(self, img_bgr: np.ndarray) -> None:
-        rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB) if img_bgr.ndim == 3 else img_bgr
-        self._view.setImage(rgb, autoLevels=False, levels=(0, 255))
+        self._set_image(img_bgr, auto_range=True)
         self.show()
         self.raise_()
         self.activateWindow()
+
+    def update_image(self, img_bgr: np.ndarray) -> None:
+        """Remplace l'image sans reprendre le focus ni recadrer la vue.
+
+        Utilisé par le fondu interactif de l'onglet Double-exposition : pendant
+        que l'utilisateur déplace le slider, reprendre le focus le lui
+        arracherait et un ``autoRange`` annulerait son zoom à chaque cran.
+        Sans effet si la fenêtre n'est pas déjà visible.
+        """
+        if self.isVisible():
+            self._set_image(img_bgr, auto_range=False)
+
+    def _set_image(self, img_bgr: np.ndarray, auto_range: bool) -> None:
+        rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB) if img_bgr.ndim == 3 else img_bgr
+        self._view.setImage(
+            rgb, autoLevels=False, levels=(0, 255), autoRange=auto_range
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +159,9 @@ class ResultWindow(QMainWindow):
 class _RestoreWorker(QThread):
     result_ready = pyqtSignal(np.ndarray)
     error        = pyqtSignal(str)
+    # Couple d'images recalé, si le moteur en expose un (DualExposureEngine).
+    # Permet à la GUI de refaire un fondu sans relancer tout le traitement.
+    pair_ready   = pyqtSignal(object)
 
     def __init__(
         self,
@@ -162,6 +181,9 @@ class _RestoreWorker(QThread):
             eng = build_engine(self._engine, self._model_path, self._params)
             with performance_mode():
                 result = eng.restore_array(self._img)
+            pair = getattr(eng, "aligned_pair", None)
+            if pair is not None:
+                self.pair_ready.emit(pair)
             self.result_ready.emit(result)
         except Exception as exc:
             self.error.emit(str(exc))
@@ -427,6 +449,19 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
             tab_widget.addTab(tree, engine.value)
             self._result_windows[engine] = ResultWindow(engine.value)
 
+        # ── Fondu interactif (onglet Double-exposition) ───────────────────
+        # Le recalage est fait une seule fois par « Restaurer » ; ensuite le
+        # slider ne recalcule qu'un addWeighted sur le couple mémorisé.
+        # Un timer anti-rebond évite d'empiler un recalcul par cran de slider.
+        self._dual_pair: tuple[np.ndarray, np.ndarray] | None = None
+        self._dual_timer = QTimer(self)
+        self._dual_timer.setSingleShot(True)
+        self._dual_timer.setInterval(150)
+        self._dual_timer.timeout.connect(self._refresh_dual_blend)
+        self._param_roots[Engine.DUAL].child("alpha").sigValueChanged.connect(
+            lambda *_: self._dual_timer.start()
+        )
+
         # Combo récursif + container
         self._combo_recursive = QComboBox()
         self._combo_recursive.setObjectName("comboRecursive")
@@ -593,6 +628,14 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
         """
         if self._original is None:
             return
+        if self._current_engine is Engine.DUAL:
+            QMessageBox.information(
+                self, "Colab",
+                "Le moteur Double-exposition combine deux images locales et ne "
+                "consomme pas de GPU : il s'exécute toujours en local.\n\n"
+                "Le protocole Colab n'envoie qu'une seule image par requête.",
+            )
+            return
         self._pending_engine = self._current_engine
         self._ui.actionColabRestore.setEnabled(False)
         self.statusBar().showMessage(
@@ -634,11 +677,13 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
         from media_restorer.engines.swinir_engine import SwinIREngine
         from media_restorer.engines.lama_engine import LaMaEngine
         from media_restorer.engines.gfpgan_engine import GFPGANEngine
+        from media_restorer.engines.dual_engine import DualExposureEngine
         _cls: dict[Engine, type] = {
             Engine.REAL_ESRGAN: RealESRGANEngine,
             Engine.SWINIR:      SwinIREngine,
             Engine.LAMA:        LaMaEngine,
             Engine.GFPGAN:      GFPGANEngine,
+            Engine.DUAL:        DualExposureEngine,
         }
         for i, engine in enumerate(self._tab_engines):
             doc = inspect.cleandoc(_cls[engine].__doc__ or engine.value)
@@ -699,12 +744,43 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
         self.statusBar().showMessage(
             f"Restauration en cours ({self._pending_engine.value})…"
         )
+        self._dual_pair = None
         self._worker = _RestoreWorker(
             self._original, self._pending_engine, self._model_path, params
         )
         self._worker.result_ready.connect(self._on_restore_done)
+        self._worker.pair_ready.connect(self._on_pair_ready)
         self._worker.error.connect(self._on_restore_error)
         self._worker.start()
+
+    def _on_pair_ready(self, pair: object) -> None:
+        """Mémorise le couple recalé émis par le moteur Double-exposition."""
+        self._dual_pair = pair  # type: ignore[assignment]
+
+    def _refresh_dual_blend(self) -> None:
+        """Recalcule le fondu après un mouvement du slider ``alpha``.
+
+        N'agit qu'en mode « fondu » et seulement si un couple recalé est déjà
+        en mémoire — sinon le slider n'a rien à interpoler et il faut passer
+        par « Restaurer ».  Le recalage n'est pas refait : seul un
+        ``addWeighted`` est recalculé, ce qui reste interactif même en pleine
+        résolution.
+        """
+        from media_restorer.engines.dual_engine import MODE_FONDU, DualExposureEngine
+        if self._dual_pair is None:
+            return
+        params = self._read_params(Engine.DUAL)
+        if params.get("mode") != MODE_FONDU:
+            return
+        alpha  = float(params["alpha"])
+        img_a, img_b = self._dual_pair
+        result = DualExposureEngine.blend(img_a, img_b, alpha)
+        self._restored = result
+        self._result_windows[Engine.DUAL].update_image(result)
+        self._ui.actionSave.setEnabled(True)
+        self.statusBar().showMessage(
+            f"Fondu — {1 - alpha:.0%} image 1 / {alpha:.0%} image 2"
+        )
 
     def _on_restore_done(self, result: np.ndarray) -> None:
         self._restored = result
@@ -739,6 +815,15 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
     # ------------------------------------------------------------------
 
     def _start_batch(self) -> None:
+        if self._current_engine is Engine.DUAL:
+            QMessageBox.information(
+                self, "Traitement par lot",
+                "Le moteur Double-exposition travaille sur un couple d'images "
+                "choisi explicitement.\n\nEn lot, la même 2ᵉ image serait "
+                "appliquée à tout le répertoire — utilisez « Restaurer » "
+                "couple par couple.",
+            )
+            return
         directory = QFileDialog.getExistingDirectory(self, "Choisir un répertoire")
         if not directory:
             return

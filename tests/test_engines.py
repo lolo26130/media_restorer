@@ -9,7 +9,9 @@ import cv2
 import numpy as np
 import pytest
 
-from media_restorer.engines import Engine, build_engine
+import media_restorer.engines.dual_engine as dual_mod
+from media_restorer.engines import ENGINE_PARAMS, Engine, build_engine
+from media_restorer.engines.dual_engine import DualExposureEngine
 from media_restorer.engines.base import BaseEngine
 from media_restorer.engines.lama_engine import LaMaEngine
 
@@ -171,3 +173,214 @@ def test_build_engine_params_passed_as_kwargs(tmp_path, monkeypatch):
     # Test direct : appel au constructeur avec des params
     _FakeEngine(scale=2, tile=128)
     assert captured == {"scale": 2, "tile": 128}
+
+
+# ---------------------------------------------------------------------------
+# DualExposureEngine — recalage et fusion double-exposition
+# ---------------------------------------------------------------------------
+
+def _textured(h=300, w=300, seed=0) -> np.ndarray:
+    """Image BGR texturée et reproductible (le recalage a besoin de détail)."""
+    rng = np.random.default_rng(seed)
+    base = rng.integers(60, 200, size=(h, w), dtype=np.uint8)
+    base = cv2.GaussianBlur(base, (0, 0), 1.5)
+    return cv2.cvtColor(base, cv2.COLOR_GRAY2BGR)
+
+
+def test_dual_estimate_shift_recovers_translation():
+    """estimate_shift retrouve une translation injectée, au sous-pixel près."""
+    img = cv2.cvtColor(_textured(400, 400), cv2.COLOR_BGR2GRAY)
+    dx_true, dy_true = 7.0, -4.0
+    matrix = np.array([[1, 0, dx_true], [0, 1, dy_true]], dtype=np.float32)
+    shifted = cv2.warpAffine(img, matrix, (400, 400), borderMode=cv2.BORDER_REPLICATE)
+
+    dx, dy = DualExposureEngine.estimate_shift(img, shifted)
+
+    assert dx == pytest.approx(dx_true, abs=0.5)
+    assert dy == pytest.approx(dy_true, abs=0.5)
+
+
+def test_dual_estimate_shift_zero_on_identical_images():
+    """Deux images identiques donnent un décalage nul."""
+    img = cv2.cvtColor(_textured(400, 400), cv2.COLOR_BGR2GRAY)
+
+    dx, dy = DualExposureEngine.estimate_shift(img, img)
+
+    assert dx == pytest.approx(0.0, abs=0.2)
+    assert dy == pytest.approx(0.0, abs=0.2)
+
+
+def test_dual_align_pair_realigns_and_crops():
+    """align_pair recale l'image 2 et rogne la bande de bord devenue invalide."""
+    img_a = _textured(400, 400)
+    matrix = np.array([[1, 0, 6.0], [0, 1, 3.0]], dtype=np.float32)
+    img_b = cv2.warpAffine(img_a, matrix, (400, 400), borderMode=cv2.BORDER_REPLICATE)
+    engine = DualExposureEngine(second_path="ignored")
+
+    out_a, out_b = engine.align_pair(img_a, img_b)
+
+    # Rognage : le résultat est plus petit que l'entrée
+    assert out_a.shape == out_b.shape
+    assert out_a.shape[0] < 400 and out_a.shape[1] < 400
+    # Après recalage les deux clichés coïncident très largement
+    diff_before = np.abs(img_a.astype(int) - img_b.astype(int)).mean()
+    diff_after  = np.abs(out_a.astype(int) - out_b.astype(int)).mean()
+    assert diff_after < diff_before / 4
+
+
+def test_dual_blend_endpoints_and_midpoint():
+    """blend(0) rend l'image 1, blend(1) l'image 2, blend(0.5) la moyenne."""
+    img_a = np.full((10, 10, 3), 40, dtype=np.uint8)
+    img_b = np.full((10, 10, 3), 200, dtype=np.uint8)
+
+    np.testing.assert_array_equal(DualExposureEngine.blend(img_a, img_b, 0.0), img_a)
+    np.testing.assert_array_equal(DualExposureEngine.blend(img_a, img_b, 1.0), img_b)
+    assert DualExposureEngine.blend(img_a, img_b, 0.5)[0, 0, 0] == pytest.approx(120, abs=1)
+
+
+def test_dual_combine_min_and_max():
+    """Les modes min/max prennent bien le pixel le plus sombre / le plus clair."""
+    img_a = np.full((8, 8, 3), 40, dtype=np.uint8)
+    img_b = np.full((8, 8, 3), 200, dtype=np.uint8)
+    img_a[0, 0] = 250
+    img_b[0, 0] = 10
+
+    eng_min = DualExposureEngine(second_path="x", mode=dual_mod.MODE_MIN)
+    eng_max = DualExposureEngine(second_path="x", mode=dual_mod.MODE_MAX)
+
+    assert eng_min.combine(img_a, img_b)[0, 0, 0] == 10
+    assert eng_min.combine(img_a, img_b)[4, 4, 0] == 40
+    assert eng_max.combine(img_a, img_b)[0, 0, 0] == 250
+    assert eng_max.combine(img_a, img_b)[4, 4, 0] == 200
+
+
+def test_dual_combine_rejects_unknown_mode():
+    """Un mode de fusion inconnu lève une erreur explicite."""
+    engine = DualExposureEngine(second_path="x", mode="inexistant")
+    img = np.zeros((8, 8, 3), dtype=np.uint8)
+
+    with pytest.raises(ValueError, match="Mode de fusion inconnu"):
+        engine.combine(img, img)
+
+
+def test_dual_lowpass_matches_exact_gaussian():
+    """Le passe-bas sous-échantillonné reste très proche du flou exact.
+
+    C'est l'optimisation qui rend le mode « détail » ~13× plus rapide ; on
+    vérifie que l'approximation ne dérive pas (cf. docstring de _lowpass).
+    """
+    img = _textured(256, 256)
+    radius = 16
+
+    approx = DualExposureEngine._lowpass(img, radius)
+    exact  = cv2.GaussianBlur(img.astype(np.float32), (0, 0), radius)
+
+    assert np.abs(approx - exact).mean() < 0.5
+    assert np.abs(approx - exact).max() < 6.0
+
+
+def test_dual_detail_mode_takes_low_from_base_and_high_from_other():
+    """Le mode détail prend la tonalité d'un cliché et la netteté de l'autre.
+
+    Image 1 = texture nette mais sombre ; image 2 = même texture floutée et
+    claire.  Base = image 2 → le résultat doit reprendre le niveau clair de
+    l'image 2 tout en retrouvant la netteté de l'image 1.
+    """
+    sharp_dark  = np.clip(_textured(256, 256).astype(int) - 40, 0, 255).astype(np.uint8)
+    blurry_pale = cv2.GaussianBlur(
+        np.clip(sharp_dark.astype(int) + 80, 0, 255).astype(np.uint8), (0, 0), 3
+    )
+    engine = DualExposureEngine(
+        second_path="x", mode=dual_mod.MODE_DETAIL,
+        detail_base=dual_mod.BASE_IMG2, detail_radius=15, detail_gain=1.0,
+    )
+
+    result = engine.combine(sharp_dark, blurry_pale)
+
+    def sharpness(i):
+        return cv2.Laplacian(cv2.cvtColor(i, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()
+
+    # Tonalité : proche de l'image 2 (claire), pas de l'image 1 (sombre)
+    assert abs(result.mean() - blurry_pale.mean()) < abs(result.mean() - sharp_dark.mean())
+    # Netteté : nettement au-dessus de l'image 2 floue dont vient la base
+    assert sharpness(result) > sharpness(blurry_pale) * 2
+
+
+def test_dual_match_levels_aligns_exposure():
+    """match_levels ramène les niveaux de l'image 2 sur ceux de l'image 1."""
+    img_a = _textured(128, 128)
+    img_b = np.clip(img_a.astype(float) * 0.6 + 30, 0, 255).astype(np.uint8)
+
+    matched = DualExposureEngine.match_levels(img_a, img_b)
+
+    assert abs(int(matched.mean()) - int(img_a.mean())) < abs(int(img_b.mean()) - int(img_a.mean()))
+    assert abs(int(matched.mean()) - int(img_a.mean())) <= 2
+
+
+def test_dual_restore_array_without_second_path_explains_how_to_fix():
+    """Sans 2ᵉ image, l'erreur indique où la sélectionner."""
+    engine = DualExposureEngine()
+
+    with pytest.raises(ValueError, match="2ᵉ image"):
+        engine.restore_array(np.zeros((10, 10, 3), dtype=np.uint8))
+
+
+def test_dual_restore_array_rejects_missing_file(tmp_path):
+    """Un chemin de 2ᵉ image inexistant est signalé clairement."""
+    engine = DualExposureEngine(second_path=str(tmp_path / "absent.png"))
+
+    with pytest.raises(ValueError, match="introuvable"):
+        engine.restore_array(np.zeros((10, 10, 3), dtype=np.uint8))
+
+
+def test_dual_restore_array_rejects_size_mismatch(tmp_path):
+    """Deux clichés de tailles différentes sont refusés (pas de mise à l'échelle)."""
+    second = tmp_path / "b.png"
+    cv2.imwrite(str(second), _textured(64, 64))
+    engine = DualExposureEngine(second_path=str(second))
+
+    with pytest.raises(ValueError, match="même taille"):
+        engine.restore_array(_textured(128, 128))
+
+
+def test_dual_restore_array_end_to_end_exposes_aligned_pair(tmp_path):
+    """restore_array produit une image et mémorise le couple recalé.
+
+    Le couple mémorisé est ce qui permet à la GUI de refaire un fondu au
+    slider sans relancer le recalage.
+    """
+    img_a  = _textured(256, 256)
+    second = tmp_path / "b.png"
+    cv2.imwrite(str(second), cv2.GaussianBlur(img_a, (0, 0), 2))
+    engine = DualExposureEngine(second_path=str(second), mode=dual_mod.MODE_FONDU)
+
+    result = engine.restore_array(img_a)
+
+    assert result.dtype == np.uint8 and result.ndim == 3
+    assert engine.aligned_pair is not None
+    pair_a, pair_b = engine.aligned_pair
+    assert pair_a.shape == pair_b.shape == result.shape
+
+
+def test_dual_engine_params_match_constructor_signature():
+    """Chaque paramètre du 5ᵉ onglet correspond à un kwarg du constructeur.
+
+    build_engine transmet les params du ParameterTree en **kwargs : une clé
+    orpheline ferait planter la construction du moteur au clic sur Restaurer.
+    """
+    import inspect
+    accepted = set(inspect.signature(DualExposureEngine.__init__).parameters) - {"self"}
+    declared = {p["name"] for p in ENGINE_PARAMS[Engine.DUAL]}
+
+    assert declared <= accepted, f"paramètres orphelins : {declared - accepted}"
+
+
+def test_build_engine_dual_forwards_params(tmp_path):
+    """build_engine(Engine.DUAL) construit bien un DualExposureEngine réglé."""
+    engine = build_engine(
+        Engine.DUAL, None, {"mode": dual_mod.MODE_MIN, "second_path": "x", "alpha": 0.25}
+    )
+
+    assert isinstance(engine, DualExposureEngine)
+    assert engine._mode == dual_mod.MODE_MIN
+    assert engine._alpha == 0.25
