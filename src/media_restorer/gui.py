@@ -165,21 +165,32 @@ class ResultWindow(QMainWindow):
     def update_image(
         self, img_bgr: np.ndarray, scale: tuple[float, float] | None = None
     ) -> None:
-        """Remplace l'image sans reprendre le focus ni recadrer la vue.
+        """Remplace l'image ; réaffiche la fenêtre si elle avait été fermée.
 
         Utilisé par l'aperçu interactif de l'onglet Double-exposition : pendant
-        que l'utilisateur déplace un slider, reprendre le focus le lui
-        arracherait et un ``autoRange`` annulerait son zoom à chaque cran.
-        Sans effet si la fenêtre n'est pas déjà visible.
+        que l'utilisateur déplace un slider sur une fenêtre déjà visible, ne
+        pas reprendre le focus ni recadrer la vue à chaque cran.
+
+        Mais si la fenêtre a été fermée entre-temps, la rouvrir plutôt que de
+        laisser le slider paraître sans effet : un ``update_image`` muet sur
+        une fenêtre invisible ne laisse à l'utilisateur aucun moyen de
+        comprendre pourquoi l'image ne change pas.
 
         *scale* étire l'image sur l'aire qu'elle doit occuper dans la vue.
         Indispensable pour un aperçu en résolution réduite : sans lui, une
         image plus petite se dessine dans un coin du cadrage précédent — elle
         change bien, mais hors du champ regardé, ce qui donne l'impression
-        que le slider n'agit pas.
+        que le slider n'agit pas.  Sans objet à la réouverture — il n'y a pas
+        de cadrage précédent à respecter, ``autoRange`` suffit.
         """
-        if self.isVisible():
-            self._set_image(img_bgr, auto_range=False, scale=scale)
+        was_visible = self.isVisible()
+        self._set_image(
+            img_bgr, auto_range=not was_visible, scale=scale if was_visible else None
+        )
+        if not was_visible:
+            self.show()
+            self.raise_()
+            self.activateWindow()
 
     def _set_image(
         self,
@@ -878,6 +889,14 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
         Le titre de la fenêtre de résultat le signale.
         """
         if self._dual_preview is None:
+            # Pas de couple recalé en mémoire — un mouvement de slider avant
+            # tout « Restaurer » n'a rien à réutiliser.  Sans ce message,
+            # bouger le slider ne fait strictement rien d'observable : c'est
+            # le symptôme qu'on veut éviter à tout prix ici.
+            self.statusBar().showMessage(
+                "Aperçu Double-exposition : cliquez d'abord sur « Restaurer » "
+                "pour calculer un premier résultat."
+            )
             return
         params = self._read_params(Engine.DUAL)
         engine = build_engine(Engine.DUAL, self._model_path, params)

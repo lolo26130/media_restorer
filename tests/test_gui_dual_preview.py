@@ -260,28 +260,38 @@ def test_preview_does_not_pass_itself_off_as_a_saveable_result(window):
     assert not window._ui.actionSave.isEnabled()
 
 
-def test_preview_does_not_reopen_a_closed_result_window(window):
-    """Si la fenêtre de résultat est fermée, l'aperçu ne la rouvre pas.
+def test_preview_reopens_a_closed_result_window(window):
+    """Si la fenêtre de résultat a été fermée, l'aperçu la rouvre.
 
-    ``update_image`` ne peint que dans une fenêtre déjà visible : la rouvrir
-    volerait le focus à l'utilisateur en plein réglage d'un slider.
+    Régression : ``update_image`` ne peignait que dans une fenêtre déjà
+    visible, sans jamais la rouvrir ni le signaler.  Si l'utilisateur fermait
+    la fenêtre de résultat puis continuait de régler le slider, chaque
+    mouvement était silencieusement sans effet — exactement le symptôme
+    « le slider n'agit pas sur l'image », sans qu'aucun message n'explique
+    pourquoi.
     """
     window._on_pair_ready(_pair(600, 400))
     result_window = window._result_windows[Engine.DUAL]
     result_window.hide()
 
-    window._refresh_dual_preview()          # ne doit pas lever
+    window._refresh_dual_preview()
 
-    assert not result_window.isVisible()
+    assert result_window.isVisible()
 
 
-def test_preview_is_a_no_op_before_any_restore(window):
-    """Sans couple mémorisé, l'aperçu ne fait rien plutôt que de planter."""
+def test_preview_before_any_restore_explains_how_to_fix(window):
+    """Sans couple mémorisé, un message explicite remplace le silence total.
+
+    Régression : bouger le slider avant le premier « Restaurer » ne faisait
+    strictement rien d'observable — ni image, ni message — ce qui est
+    indiscernable d'un bug pour l'utilisateur.
+    """
     assert window._dual_preview is None
 
     window._refresh_dual_preview()          # ne doit pas lever
 
     assert window._restored is None
+    assert "Restaurer" in window.statusBar().currentMessage()
 
 
 def test_full_restore_clears_the_preview_marker_from_the_title(window):
