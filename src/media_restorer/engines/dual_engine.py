@@ -14,6 +14,8 @@ Les opérations sont vectorisées et coûtent quelques secondes sur une image de
 from __future__ import annotations
 
 import math
+import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import cv2
@@ -38,6 +40,11 @@ BASE_IMG2 = "image 2 (rétroéclairée)"
 # étant cyclique), puis affiné à pleine résolution sur un crop central.
 _COARSE_MAX = 1024
 _REFINE_CROP = 2048
+
+# Fusion de Mertens : au-delà de cette taille, le calcul est réparti sur des
+# tuiles chevauchantes traitées en parallèle (voir docstring de ``_mertens``).
+_MERTENS_TILE = 1500
+_MERTENS_TILE_PAD = 100
 
 
 class DualExposureEngine(BaseEngine):
@@ -114,11 +121,21 @@ class DualExposureEngine(BaseEngine):
     Coût
     ----
     Mesuré sur un couple 7360×4912 (36 Mpx) : recalage 0,3 s ; ``fondu`` et
-    ``min``/``max`` < 0,1 s ; ``détail`` ≈ 0,5 s ; ``fusion`` ≈ 4,5 s et ≈ 4 Go
-    de mémoire vive.  Le passe-bas du mode ``détail`` est calculé sur une
+    ``min``/``max`` < 0,1 s ; ``détail`` ≈ 0,5 s ; ``fusion`` ≈ 1,3 s (contre
+    2,9 s en un seul appel — voir « Parallélisme » ci-dessous) et ≈ 4 Go de
+    mémoire vive.  Le passe-bas du mode ``détail`` est calculé sur une
     version sous-échantillonnée puis ré-agrandie — le résultat étant limité en
     bande, l'approximation est quasi exacte (écart max mesuré 2,5 niveaux sur
     255, moyenne 0,06) pour un gain de vitesse de 13×.
+
+    Parallélisme (mode ``fusion``)
+    -------------------------------
+    Voir la docstring de ``_mertens`` pour le détail : au-delà de
+    ``_MERTENS_TILE`` px, l'image est découpée en tuiles chevauchantes
+    traitées en parallèle par des threads Python (``ThreadPoolExecutor``),
+    OpenCV libérant le GIL pendant chaque appel ``MergeMertens``.  Gain
+    mesuré ×2,2 sur un couple 36 Mpx, pour un écart de moins de 3 niveaux sur
+    255 face au calcul plein cadre — imperceptible.
 
     Paramètres
     ----------
@@ -311,11 +328,82 @@ class DualExposureEngine(BaseEngine):
         high = detail_src.astype(np.float32) - self._lowpass(detail_src, radius)
         return np.clip(low + self._detail_gain * high, 0, 255).astype(np.uint8)
 
-    def _mertens(self, img_a: np.ndarray, img_b: np.ndarray) -> np.ndarray:
-        """Exposure fusion de Mertens et al. sur le couple."""
+    def _mertens_single(self, img_a: np.ndarray, img_b: np.ndarray) -> np.ndarray:
+        """Un appel ``MergeMertens`` sur *img_a*/*img_b* — aucun découpage."""
         merge = cv2.createMergeMertens(self._w_contrast, 1.0, self._w_exposure)
         fused = merge.process([img_a, img_b])
         return np.clip(fused * 255.0, 0, 255).astype(np.uint8)
+
+    def _mertens(self, img_a: np.ndarray, img_b: np.ndarray) -> np.ndarray:
+        """Exposure fusion de Mertens et al. sur le couple.
+
+        Technique d'accélération : parallélisme par tuiles via des threads
+        Python, pas des processus.  ``cv2.createMergeMertens().process()``
+        est un appel C++ qui, comme la quasi-totalité des fonctions OpenCV,
+        *libère le GIL* pendant son exécution — plusieurs appels lancés
+        depuis des threads Python distincts s'exécutent donc réellement en
+        parallèle sur plusieurs cœurs, sans le coût de sérialisation d'un
+        ``ProcessPoolExecutor`` (les tableaux de 36 Mpx n'ont pas à être
+        recopiés entre processus).
+
+        Pourquoi découper en tuiles alors que ``parallel_for_`` d'OpenCV
+        (pthreads, confirmé actif sur cette machine) pourrait déjà utiliser
+        tous les cœurs : mesuré sur un couple 4910×7358, l'appel Mertens
+        direct passe de 4,87 s à seulement 2,92 s entre 1 et 16 threads
+        OpenCV (×1,7) — la construction/fusion de la pyramide laplacienne de
+        Mertens n'est donc pas bien parallélisée en interne.  Lancer
+        plusieurs tuiles indépendantes en parallèle (chaque tuile bornant
+        elle-même son nombre de threads OpenCV à 1 pour éviter la
+        sursouscription) mesure ×2,2 sur la même image (2,92 s → 1,3 s).
+
+        Le recouvrement (``_MERTENS_TILE_PAD``) donne à la pyramide de
+        chaque tuile le contexte des tuiles voisines ; seule la zone utile
+        de chaque tuile est recomposée dans le résultat final, comme pour
+        ``LaMaEngine._restore_tiled``.  Écart mesuré face à un calcul plein
+        cadre (tuile 1500 px, recouvrement 100 px) : 0,68 niveau en moyenne,
+        3 niveaux maximum sur 255 — imperceptible, tout en restant nettement
+        plus rapide qu'un recouvrement plus large qui n'améliore pas
+        sensiblement ce résultat.
+
+        En dessous de ``_MERTENS_TILE`` (c'est le cas de l'aperçu réduit de
+        la GUI), un seul appel est fait : le découpage n'apporterait rien
+        sur une image déjà petite et n'ajouterait que la latence de
+        démarrage du pool de threads.
+        """
+        h, w = img_a.shape[:2]
+        if max(h, w) <= _MERTENS_TILE:
+            return self._mertens_single(img_a, img_b)
+
+        tile, pad = _MERTENS_TILE, _MERTENS_TILE_PAD
+        tiles_x, tiles_y = math.ceil(w / tile), math.ceil(h / tile)
+        jobs = []
+        for y in range(tiles_y):
+            for x in range(tiles_x):
+                in_x0, in_x1 = x * tile, min(x * tile + tile, w)
+                in_y0, in_y1 = y * tile, min(y * tile + tile, h)
+                pad_x0, pad_x1 = max(in_x0 - pad, 0), min(in_x1 + pad, w)
+                pad_y0, pad_y1 = max(in_y0 - pad, 0), min(in_y1 + pad, h)
+                jobs.append((in_x0, in_x1, in_y0, in_y1, pad_x0, pad_x1, pad_y0, pad_y1))
+
+        def _run(job):
+            in_x0, in_x1, in_y0, in_y1, px0, px1, py0, py1 = job
+            crop = self._mertens_single(
+                img_a[py0:py1, px0:px1], img_b[py0:py1, px0:px1]
+            )
+            out_x0, out_y0 = in_x0 - px0, in_y0 - py0
+            interior = crop[out_y0:out_y0 + (in_y1 - in_y0), out_x0:out_x0 + (in_x1 - in_x0)]
+            return in_x0, in_x1, in_y0, in_y1, interior
+
+        output = np.empty((h, w, 3), dtype=np.uint8)
+        previous_threads = cv2.getNumThreads()
+        cv2.setNumThreads(1)  # évite la sursouscription : le parallélisme vient des threads Python
+        try:
+            with ThreadPoolExecutor(max_workers=min(len(jobs), os.cpu_count() or 4)) as pool:
+                for in_x0, in_x1, in_y0, in_y1, interior in pool.map(_run, jobs):
+                    output[in_y0:in_y1, in_x0:in_x1] = interior
+        finally:
+            cv2.setNumThreads(previous_threads)
+        return output
 
     def fuse(self, img_a: np.ndarray, img_b: np.ndarray) -> np.ndarray:
         """Harmonisation des niveaux puis fusion, sur un couple **déjà recalé**.

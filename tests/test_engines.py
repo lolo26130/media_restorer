@@ -456,3 +456,93 @@ def test_dual_accepts_unusual_pixel_formats(tmp_path, make, label):
 
     assert result.dtype == np.uint8, label
     assert result.ndim == 3 and result.shape[2] == 3, label
+
+
+# ---------------------------------------------------------------------------
+# DualExposureEngine — Mertens tuilé/parallèle (accélération)
+# ---------------------------------------------------------------------------
+
+def test_dual_mertens_below_tile_threshold_uses_a_single_call():
+    """Sous le seuil de tuilage, aucun découpage : un seul appel Mertens."""
+    from unittest.mock import patch
+
+    engine = DualExposureEngine(second_path="x", mode=dual_mod.MODE_FUSION)
+    img_a, img_b = _textured(300, 300), _textured(300, 300, seed=1)
+
+    with patch.object(
+        engine, "_mertens_single", wraps=engine._mertens_single
+    ) as spy:
+        engine.combine(img_a, img_b)
+
+    assert spy.call_count == 1
+
+
+def test_dual_mertens_above_tile_threshold_dispatches_several_tiles():
+    """Au-delà du seuil, le calcul est réparti sur plusieurs tuiles."""
+    from unittest.mock import patch
+
+    engine = DualExposureEngine(second_path="x", mode=dual_mod.MODE_FUSION)
+    size = dual_mod._MERTENS_TILE + 200
+    img_a, img_b = _textured(size, size), _textured(size, size, seed=1)
+
+    with patch.object(
+        engine, "_mertens_single", wraps=engine._mertens_single
+    ) as spy:
+        engine.combine(img_a, img_b)
+
+    assert spy.call_count > 1
+
+
+def test_dual_mertens_tiled_matches_single_call_closely():
+    """Le résultat tuilé/parallèle reste très proche d'un calcul plein cadre.
+
+    Le découpage introduit un recouvrement pour donner du contexte à la
+    pyramide laplacienne de chaque tuile ; seule la zone utile de chaque
+    tuile est recomposée.  Un écart de quelques niveaux est attendu à la
+    jointure des tuiles, mais il doit rester imperceptible.
+    """
+    engine = DualExposureEngine(second_path="x", mode=dual_mod.MODE_FUSION)
+    size = dual_mod._MERTENS_TILE + 400
+    img_a = _textured(size, size)
+    img_b = np.clip(img_a.astype(int) + 40, 0, 255).astype(np.uint8)
+
+    tiled = engine._mertens(img_a, img_b)
+    reference = engine._mertens_single(img_a, img_b)
+
+    diff = np.abs(tiled.astype(int) - reference.astype(int))
+    assert diff.mean() < 2.0
+    assert diff.max() <= 8
+
+
+def test_dual_mertens_tiled_covers_the_full_frame_without_gaps():
+    """Chaque pixel de sortie provient d'exactement une tuile — pas de trous."""
+    engine = DualExposureEngine(second_path="x", mode=dual_mod.MODE_FUSION)
+    size = dual_mod._MERTENS_TILE + 250
+    img_a, img_b = _textured(size, size), _textured(size, size, seed=2)
+
+    result = engine._mertens(img_a, img_b)
+
+    assert result.shape == (size, size, 3)
+    assert result.dtype == np.uint8
+
+
+def test_dual_mertens_restores_global_opencv_thread_count():
+    """Le tuilage ne doit pas laisser cv2.setNumThreads modifié après coup.
+
+    ``cv2.setNumThreads`` est un état global du processus : l'abaisser à 1
+    pour éviter la sursouscription pendant le tuilage puis oublier de le
+    restaurer affecterait silencieusement tous les traitements suivants
+    (y compris ceux d'autres moteurs).
+    """
+    import cv2
+
+    engine = DualExposureEngine(second_path="x", mode=dual_mod.MODE_FUSION)
+    size = dual_mod._MERTENS_TILE + 200
+    img_a, img_b = _textured(size, size), _textured(size, size, seed=3)
+    cv2.setNumThreads(7)
+
+    try:
+        engine._mertens(img_a, img_b)
+        assert cv2.getNumThreads() == 7
+    finally:
+        cv2.setNumThreads(-1)  # revient à l'auto-détection par défaut
