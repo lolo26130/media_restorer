@@ -256,6 +256,35 @@
       </widget>
      </item>
      <item>
+      <widget class="QLabel" name="labelSkin">
+       <property name="text">
+        <string>Apparence :</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QComboBox" name="comboSkin">
+       <property name="toolTip">
+        <string>Apparence de l'application — « Système » détecte le thème clair/sombre de l'OS</string>
+       </property>
+       <item>
+        <property name="text">
+         <string>Système</string>
+        </property>
+       </item>
+       <item>
+        <property name="text">
+         <string>Clair</string>
+        </property>
+       </item>
+       <item>
+        <property name="text">
+         <string>Sombre</string>
+        </property>
+       </item>
+      </widget>
+     </item>
+     <item>
       <spacer name="spacerTooltips">
        <property name="orientation">
         <enum>Qt::Horizontal</enum>

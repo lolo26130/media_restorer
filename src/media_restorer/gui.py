@@ -17,7 +17,7 @@ import cv2
 import numpy as np
 import pyqtgraph as pg
 from pyqtgraph.parametertree import Parameter, ParameterTree
-from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import Qt, QSettings, QThread, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QApplication,
@@ -43,7 +43,28 @@ from media_restorer.engines import ENGINE_PARAMS, Engine, build_engine
 from media_restorer.download_models import MODEL_REGISTRY
 from media_restorer.image_io import imread_oriented
 from media_restorer.power import performance_mode
+from media_restorer.theme import THEME_SYSTEM, apply_theme
 from OutilsQt.Utils_Qt import compile_ui, compile_qrc, tooltips_from_code
+
+_SKIN_SETTINGS_KEY = "skin"
+
+
+def _skin_settings() -> QSettings:
+    """QSettings du skin, en ``IniFormat`` explicite.
+
+    ``QSettings("org", "app")`` retombe sur ``NativeFormat``, qui sur Linux
+    n'est *pas* le même format que ``IniFormat`` du point de vue de
+    ``QSettings.setPath`` — un ``setPath(IniFormat, …)`` (utilisé par les
+    tests pour ne jamais toucher la config réelle de l'utilisateur) resterait
+    donc sans effet sur des instances construites sans préciser le format.
+    """
+    return QSettings(
+        QSettings.Format.IniFormat,
+        QSettings.Scope.UserScope,
+        "media_restorer",
+        "media_restorer",
+    )
+
 
 pg.setConfigOption("imageAxisOrder", "row-major")
 
@@ -575,6 +596,15 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
         # ── Tooltips — mode initial depuis comboBox ────────────────────
         self._setup_tooltips(self._ui.comboTooltipMode.currentText())
 
+        # ── Apparence (skin) — appliquée avant l'affichage pour éviter tout
+        # scintillement, et indépendamment de run_gui() pour rester testable
+        # en construisant PhotoRestorationGUI() directement.
+        saved_skin = _skin_settings().value(
+            _SKIN_SETTINGS_KEY, THEME_SYSTEM
+        )
+        apply_theme(QApplication.instance(), saved_skin)
+        self._ui.comboSkin.setCurrentText(saved_skin)
+
         # ── Badge de calcul (droite de la statusBar) ──────────────────
         self._compute_badge = QLabel()
         self._compute_badge.setContentsMargins(0, 0, 4, 0)
@@ -776,6 +806,19 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
     @pyqtSlot(str)
     def on_comboTooltipMode_currentTextChanged(self, mode: str) -> None:
         self._setup_tooltips(mode)
+
+    @pyqtSlot(str)
+    def on_comboSkin_currentTextChanged(self, skin: str) -> None:
+        """Change l'apparence de l'application et mémorise le choix.
+
+        Voir ``media_restorer.theme`` pour l'origine du besoin : les SpinBox
+        de pyqtgraph héritaient d'une palette Qt par défaut peu contrastée,
+        sans option de configuration pyqtgraph pour la corriger.
+        """
+        apply_theme(QApplication.instance(), skin)
+        _skin_settings().setValue(
+            _SKIN_SETTINGS_KEY, skin
+        )
 
     # ------------------------------------------------------------------
     # Suivi des fenêtres enfants
