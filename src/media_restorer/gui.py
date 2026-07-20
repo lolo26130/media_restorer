@@ -147,7 +147,7 @@ from media_restorer.views.ui_main import Ui_MainWindow               # noqa: E40
 class ResultWindow(QMainWindow):
     """Affiche l'image restaurée dans une fenêtre portant le nom du moteur."""
 
-    def __init__(self, engine_name: str) -> None:
+    def __init__(self, engine_name: str, preserve_zoom: bool = False) -> None:
         super().__init__()
         self.setWindowTitle(engine_name)
         self.resize(900, 700)
@@ -155,9 +155,23 @@ class ResultWindow(QMainWindow):
         self._view.ui.roiBtn.hide()
         self._view.ui.menuBtn.hide()
         self.setCentralWidget(self._view)
+        # Onglet Double-exposition : on y relance « Restaurer » pour comparer
+        # des réglages sur un même détail zoomé — perdre le zoom à chaque
+        # clic obligerait à re-zoomer à chaque comparaison.  Pour les autres
+        # moteurs, chaque résultat est cadré automatiquement comme avant.
+        self._preserve_zoom = preserve_zoom
+        self._has_content   = False
 
     def show_image(self, img_bgr: np.ndarray) -> None:
-        self._set_image(img_bgr, auto_range=True)
+        """Affiche un nouveau résultat pleine résolution.
+
+        Cadre automatiquement la vue au premier affichage — rien à
+        préserver.  Aux affichages suivants, ne recadre que si
+        *preserve_zoom* est désactivé pour ce moteur.
+        """
+        auto_range = not (self._preserve_zoom and self._has_content)
+        self._set_image(img_bgr, auto_range=auto_range)
+        self._has_content = True
         self.show()
         self.raise_()
         self.activateWindow()
@@ -501,7 +515,9 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
             tree = ParameterTree(showHeader=False)
             tree.setParameters(root)
             tab_widget.addTab(tree, engine.value)
-            self._result_windows[engine] = ResultWindow(engine.value)
+            self._result_windows[engine] = ResultWindow(
+                engine.value, preserve_zoom=(engine is Engine.DUAL)
+            )
 
         # ── Aperçu interactif (onglet Double-exposition) ──────────────────
         # Le recalage n'est fait qu'au « Restaurer » ; ensuite tout changement
