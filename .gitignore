@@ -11,6 +11,7 @@ wheels/
 
 # Auto-generated UI files
 src/media_restorer/views/ui_main.py
+src/media_restorer/views/ui_root.py
 src/media_restorer/resources/icons/media_restorer_rc.py
 # Poids des modèles — trop volumineux pour git
 # Utiliser: python -m media_restorer.download_models

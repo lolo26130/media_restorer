@@ -54,8 +54,8 @@
     <property name="title">
      <string>Fichiers</string>
     </property>
-    <addaction name="actionOpen"/>
     <addaction name="actionSave"/>
+    <addaction name="actionDownloadModels"/>
    </widget>
    <widget class="QMenu" name="menuTraitement">
     <property name="title">
@@ -86,29 +86,13 @@
    <attribute name="toolBarBreak">
     <bool>false</bool>
    </attribute>
-   <addaction name="actionOpen"/>
    <addaction name="actionRestore"/>
    <addaction name="actionSave"/>
    <addaction name="actionBatch"/>
+   <addaction name="actionDownloadModels"/>
    <addaction name="actionColabConnect"/>
    <addaction name="actionColabRestore"/>
   </widget>
-  <action name="actionOpen">
-   <property name="icon">
-    <iconset resource="../resources/icons/media_restorer.qrc">
-     <normaloff>:/icons/folder-open.png</normaloff>:/icons/folder-open.png
-    </iconset>
-   </property>
-   <property name="text">
-    <string>Ouvrir une image</string>
-   </property>
-   <property name="toolTip">
-    <string>Ouvrir une image (Ctrl+O)</string>
-   </property>
-   <property name="shortcut">
-    <string>Ctrl+O</string>
-   </property>
-  </action>
   <action name="actionRestore">
    <property name="enabled">
     <bool>false</bool>
@@ -198,108 +182,19 @@
     <string>Ctrl+Shift+R</string>
    </property>
   </action>
-  <widget class="QDockWidget" name="dockTooltips">
-   <attribute name="dockWidgetArea">
-    <number>8</number>
-   </attribute>
-   <property name="windowTitle">
-    <string>Tooltips</string>
+  <action name="actionDownloadModels">
+   <property name="icon">
+    <iconset resource="../resources/icons/media_restorer.qrc">
+     <normaloff>:/icons/gear--plus.png</normaloff>:/icons/gear--plus.png
+    </iconset>
    </property>
-   <widget class="QWidget" name="dockTooltipsContents">
-    <layout class="QHBoxLayout" name="hLayoutTooltips">
-     <property name="leftMargin">
-      <number>6</number>
-     </property>
-     <property name="topMargin">
-      <number>2</number>
-     </property>
-     <property name="rightMargin">
-      <number>6</number>
-     </property>
-     <property name="bottomMargin">
-      <number>2</number>
-     </property>
-     <item>
-      <widget class="QLabel" name="labelTooltipMode">
-       <property name="text">
-        <string>Mode tooltips :</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QComboBox" name="comboTooltipMode">
-       <item>
-        <property name="text">
-         <string>docstrings</string>
-        </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>code</string>
-        </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>priority_docstrings</string>
-        </property>
-       </item>
-      </widget>
-     </item>
-     <item>
-      <widget class="QPushButton" name="btnDownloadModels">
-       <property name="text">
-        <string>Télécharger les modèles</string>
-       </property>
-       <property name="toolTip">
-        <string>Télécharger les poids manquants depuis leurs dépôts officiels</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QLabel" name="labelSkin">
-       <property name="text">
-        <string>Apparence :</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QComboBox" name="comboSkin">
-       <property name="toolTip">
-        <string>Apparence de l'application — « Système » détecte le thème clair/sombre de l'OS</string>
-       </property>
-       <item>
-        <property name="text">
-         <string>Système</string>
-        </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>Clair</string>
-        </property>
-       </item>
-       <item>
-        <property name="text">
-         <string>Sombre</string>
-        </property>
-       </item>
-      </widget>
-     </item>
-     <item>
-      <spacer name="spacerTooltips">
-       <property name="orientation">
-        <enum>Qt::Horizontal</enum>
-       </property>
-       <property name="sizeHint" stdset="0">
-        <size>
-         <width>40</width>
-         <height>20</height>
-        </size>
-       </property>
-      </spacer>
-     </item>
-    </layout>
-   </widget>
-  </widget>
+   <property name="text">
+    <string>Télécharger les modèles</string>
+   </property>
+   <property name="toolTip">
+    <string>Télécharger les poids manquants depuis leurs dépôts officiels</string>
+   </property>
+  </action>
  </widget>
  <resources>
   <include location="../resources/icons/media_restorer.qrc"/>

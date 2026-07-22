@@ -4,5 +4,7 @@
     <file>object-rotate-right.png</file>
     <file>document-save-2.png</file>
     <file>system-file-manager-3.png</file>
+    <file>gear--plus.png</file>
+    <file>inode-directory.png</file>
   </qresource>
 </RCC>

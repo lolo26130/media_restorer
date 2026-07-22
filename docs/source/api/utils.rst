@@ -24,3 +24,9 @@ Compatibilité torchvision
 
 .. automodule:: media_restorer._compat
    :members:
+
+Préférences persistantes
+--------------------------
+
+.. automodule:: media_restorer.app_settings
+   :members:

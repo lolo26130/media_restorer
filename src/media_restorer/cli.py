@@ -45,8 +45,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     photo.add_argument("--scale", type=int, default=4, help="Upscale factor (default: 4).")
 
     # --- gui sub-command ---
-    gui = sub.add_parser("gui", help="Launch the graphical interface.")
-    gui.add_argument("--model", type=Path, default=None, help="Path to .pth weights.")
+    # Pas d'option --model : le choix du chemin de poids n'a plus de sens
+    # avant que la fenêtre racine (Image Treatment) n'ait fait choisir une
+    # cible et lancé un outil — voir media_restorer.gui_root.
+    sub.add_parser("gui", help="Launch the graphical interface.")
 
     # --- film sub-command (future) ---
     film = sub.add_parser("film", help="Restore a video file (not yet implemented).")
@@ -70,7 +72,7 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "gui":
         from media_restorer.gui import run_gui
 
-        run_gui(model_path=args.model)
+        run_gui()
 
     elif args.command == "film":
         from media_restorer.film import restore_film

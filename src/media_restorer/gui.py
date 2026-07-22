@@ -17,11 +17,10 @@ import cv2
 import numpy as np
 import pyqtgraph as pg
 from pyqtgraph.parametertree import Parameter, ParameterTree
-from PyQt6.QtCore import Qt, QSettings, QThread, QTimer, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QApplication,
-    QComboBox,
     QDialog,
     QDockWidget,
     QFileDialog,
@@ -38,33 +37,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from media_restorer.app_settings import TOOLTIP_MODE_KEY, app_settings
 from media_restorer.colab_calc import ColabCalc
 from media_restorer.engines import ENGINE_PARAMS, Engine, build_engine
 from media_restorer.download_models import MODEL_REGISTRY
 from media_restorer.image_io import imread_oriented
 from media_restorer.power import performance_mode
-from media_restorer.theme import THEME_SYSTEM, apply_theme
 from OutilsQt.Utils_Qt import compile_ui, compile_qrc, tooltips_from_code
-
-_SKIN_SETTINGS_KEY = "skin"
-
-
-def _skin_settings() -> QSettings:
-    """QSettings du skin, en ``IniFormat`` explicite.
-
-    ``QSettings("org", "app")`` retombe sur ``NativeFormat``, qui sur Linux
-    n'est *pas* le même format que ``IniFormat`` du point de vue de
-    ``QSettings.setPath`` — un ``setPath(IniFormat, …)`` (utilisé par les
-    tests pour ne jamais toucher la config réelle de l'utilisateur) resterait
-    donc sans effet sur des instances construites sans préciser le format.
-    """
-    return QSettings(
-        QSettings.Format.IniFormat,
-        QSettings.Scope.UserScope,
-        "media_restorer",
-        "media_restorer",
-    )
-
 
 pg.setConfigOption("imageAxisOrder", "row-major")
 
@@ -476,21 +455,54 @@ class _DownloadDialog(QDialog):
 # ---------------------------------------------------------------------------
 
 class PhotoRestorationGUI(ColabCalc, QMainWindow):
-    """Fenêtre principale de l'application de restauration photo.
+    """Fenêtre « Media Restorer » — restauration interactive de photos anciennes.
 
-    Charge une image (ou un répertoire), choisit un moteur de restauration
-    parmi les onglets du panneau de paramètres, lance la restauration dans
-    un thread de fond, puis affiche le résultat dans une fenêtre dédiée.
+    Choisit un moteur de restauration parmi les onglets du panneau de
+    paramètres, règle ses paramètres, lance la restauration dans un thread de
+    fond, puis affiche le résultat dans une fenêtre dédiée.
+
+    Cette fenêtre ne choisit plus elle-même sa cible (fichier ou répertoire) :
+    c'est le rôle de la fenêtre racine
+    :class:`~media_restorer.gui_root.ImageTreatmentWindow` (« Image
+    Treatment »), qui lance Media Restorer via
+    :class:`~media_restorer.extensions.media_restorer_ext.MediaRestorerExtension`
+    en lui passant *target_path*/*recursive* — voir ces paramètres.  Les
+    préférences globales d'application (mode des tooltips, apparence) sont
+    elles aussi réglées dans la fenêtre racine, et lues ici via
+    :func:`~media_restorer.app_settings.app_settings`.
 
     Les tooltips des actions et des onglets sont générés automatiquement à
     partir des docstrings (ou du code source) via
-    :func:`OutilsQt.Utils_Qt.tooltips_from_code`.  Le mode est sélectionnable
-    via le comboBox du dock « Tooltips » en bas de la fenêtre.
+    :func:`OutilsQt.Utils_Qt.tooltips_from_code`, dans le mode choisi dans la
+    fenêtre racine et persisté entre les sessions.
+
+    Paramètres
+    ----------
+    model_path : Path | None
+        Chemin de poids à forcer pour le moteur actif ; ``None`` laisse
+        chaque moteur chercher ses poids par défaut (voir
+        :mod:`media_restorer.download_models`).
+    target_path : Path | None
+        Fichier image (mode restauration interactive, un seul cliché) ou
+        répertoire (mode traitement par lot) à charger dès la construction.
+        ``None`` construit la fenêtre sans rien charger — utilisé par les
+        tests et par tout usage direct de cette classe hors de la fenêtre
+        racine.
+    recursive : bool
+        Parcourt les sous-répertoires de *target_path* si c'est un
+        répertoire.  Sans effet si *target_path* est un fichier ou ``None``.
     """
 
-    def __init__(self, model_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        model_path: Path | None = None,
+        target_path: Path | None = None,
+        recursive: bool = False,
+    ) -> None:
         super().__init__()
         self._model_path      = model_path
+        self._batch_dir:      Path | None = None
+        self._batch_recursive = False
         self._original:       np.ndarray | None = None
         self._restored:       np.ndarray | None = None
         self._worker:         _RestoreWorker      | None = None
@@ -506,12 +518,12 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
         # Expose les QActions directement sur self pour tooltips_from_code.
         # setupUi(self) les crée sur self._ui ; on les copie pour que
         # inspect.getmembers(self) les trouve sous leur nom "action*".
-        self.actionOpen          = self._ui.actionOpen
-        self.actionRestore       = self._ui.actionRestore
-        self.actionSave          = self._ui.actionSave
-        self.actionBatch         = self._ui.actionBatch
-        self.actionColabConnect  = self._ui.actionColabConnect
-        self.actionColabRestore  = self._ui.actionColabRestore
+        self.actionRestore         = self._ui.actionRestore
+        self.actionSave            = self._ui.actionSave
+        self.actionBatch           = self._ui.actionBatch
+        self.actionColabConnect    = self._ui.actionColabConnect
+        self.actionColabRestore    = self._ui.actionColabRestore
+        self.actionDownloadModels  = self._ui.actionDownloadModels
 
         # ── pg.ImageView — image originale, ajouté dans imageContainer ───
         self._image_view = pg.ImageView()
@@ -567,15 +579,15 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
         )
         self._sync_dual_param_states()
 
-        # Combo récursif + container
-        self._combo_recursive = QComboBox()
-        self._combo_recursive.setObjectName("comboRecursive")
-        self._combo_recursive.addItems(["non récursif", "récursif"])
+        # Statut de la cible répertoire — en lecture seule : le choix du
+        # répertoire et du mode récursif se fait désormais dans la fenêtre
+        # racine (ImageTreatmentWindow), avant même la construction de cette
+        # fenêtre.  N'affiche rien en mode fichier unique.
+        self._batch_status_label = QLabel()
         bottom_bar = QWidget()
         hl = QHBoxLayout(bottom_bar)
         hl.setContentsMargins(6, 2, 6, 2)
-        hl.addWidget(QLabel("Répertoire :"))
-        hl.addWidget(self._combo_recursive)
+        hl.addWidget(self._batch_status_label)
         hl.addStretch()
 
         container = QWidget()
@@ -593,23 +605,24 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
         dock.setWidget(container)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
 
-        # ── Tooltips — mode initial depuis comboBox ────────────────────
-        self._setup_tooltips(self._ui.comboTooltipMode.currentText())
-
-        # ── Apparence (skin) — appliquée avant l'affichage pour éviter tout
-        # scintillement, et indépendamment de run_gui() pour rester testable
-        # en construisant PhotoRestorationGUI() directement.
-        saved_skin = _skin_settings().value(
-            _SKIN_SETTINGS_KEY, THEME_SYSTEM
+        # ── Tooltips — mode persisté, réglé dans la fenêtre racine ─────
+        # L'apparence (skin) est déjà appliquée au niveau de la QApplication
+        # par la fenêtre racine avant que Media Restorer ne soit construite
+        # (ImageTreatmentWindow.__init__) : aucune action nécessaire ici, une
+        # QPalette d'application s'applique automatiquement à toute fenêtre
+        # créée par la suite.
+        self._setup_tooltips(
+            app_settings().value(TOOLTIP_MODE_KEY, "docstrings")
         )
-        apply_theme(QApplication.instance(), saved_skin)
-        self._ui.comboSkin.setCurrentText(saved_skin)
 
         # ── Badge de calcul (droite de la statusBar) ──────────────────
         self._compute_badge = QLabel()
         self._compute_badge.setContentsMargins(0, 0, 4, 0)
         self.statusBar().addPermanentWidget(self._compute_badge)
         self._refresh_compute_badge()
+
+        # ── Cible pré-chargée par la fenêtre racine ────────────────────
+        self._apply_target(target_path, recursive)
 
     # ------------------------------------------------------------------
     # Badge de calcul
@@ -655,17 +668,6 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
     # ------------------------------------------------------------------
     # Handlers d'actions — nommés on_<widget>_<signal> pour tooltips_from_code
     # ------------------------------------------------------------------
-
-    @pyqtSlot()
-    def on_actionOpen_triggered(self) -> None:
-        """Ouvre un fichier image (PNG, JPEG, BMP, TIFF) et l'affiche dans la vue principale.
-
-        Déclenche une boîte de dialogue de sélection de fichier. L'image est
-        lue en BGR via OpenCV puis affichée en RGB dans pg.ImageView. L'action
-        Restaurer est activée et l'action Enregistrer désactivée jusqu'à la
-        prochaine restauration réussie.
-        """
-        self._load_image()
 
     @pyqtSlot()
     def on_actionRestore_triggered(self) -> None:
@@ -803,22 +805,26 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
             doc = inspect.cleandoc(_cls[engine].__doc__ or engine.value)
             self._tab_widget.setTabToolTip(i, doc)
 
-    @pyqtSlot(str)
-    def on_comboTooltipMode_currentTextChanged(self, mode: str) -> None:
-        self._setup_tooltips(mode)
+    @pyqtSlot()
+    def on_actionDownloadModels_triggered(self) -> None:
+        """Ouvre le dialogue de téléchargement des poids des moteurs.
 
-    @pyqtSlot(str)
-    def on_comboSkin_currentTextChanged(self, skin: str) -> None:
-        """Change l'apparence de l'application et mémorise le choix.
-
-        Voir ``media_restorer.theme`` pour l'origine du besoin : les SpinBox
-        de pyqtgraph héritaient d'une palette Qt par défaut peu contrastée,
-        sans option de configuration pyqtgraph pour la corriger.
+        Lance _DownloadWorker dans un thread séparé et affiche la progression
+        dans _DownloadDialog.  Les fichiers déjà présents sont signalés et
+        ignorés (skip_existing=True dans download_models.download_all).
         """
-        apply_theme(QApplication.instance(), skin)
-        _skin_settings().setValue(
-            _SKIN_SETTINGS_KEY, skin
-        )
+        dlg    = _DownloadDialog(self)
+        worker = _DownloadWorker()
+        worker.file_start.connect(dlg.on_file_start)
+        worker.file_progress.connect(dlg.on_file_progress)
+        worker.file_done.connect(dlg.on_file_done)
+        worker.file_error.connect(dlg.on_file_error)
+        worker.all_done.connect(dlg.on_all_done)
+        worker.start()
+        dlg.exec()
+        if worker.isRunning():
+            worker.terminate()
+            worker.wait()
 
     # ------------------------------------------------------------------
     # Suivi des fenêtres enfants
@@ -836,15 +842,41 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
         return w
 
     # ------------------------------------------------------------------
-    # Chargement / affichage de l'image originale
+    # Cible pré-chargée par la fenêtre racine
     # ------------------------------------------------------------------
 
-    def _load_image(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Ouvrir une image", "", "Images (*.png *.jpg *.jpeg *.bmp *.tiff)"
-        )
-        if not path:
+    def _apply_target(self, target_path: Path | None, recursive: bool) -> None:
+        """Configure la fenêtre selon la cible transmise à la construction.
+
+        Un fichier active le mode restauration interactive (``_load_path``,
+        ``actionRestore``) ; un répertoire active le mode traitement par lot
+        (``actionBatch``, sans dialogue puisque la cible est déjà connue).
+        ``target_path=None`` laisse la fenêtre dans son état par défaut — un
+        seul cas d'usage réel en dehors des tests : instancier cette classe
+        directement sans passer par la fenêtre racine.
+        """
+        self._ui.actionBatch.setEnabled(False)
+        if target_path is None:
             return
+        if target_path.is_dir():
+            self._batch_dir       = target_path
+            self._batch_recursive = recursive
+            self._ui.actionBatch.setEnabled(True)
+            mode = "récursif" if recursive else "non récursif"
+            self._batch_status_label.setText(f"Répertoire : {target_path} ({mode})")
+            self.statusBar().showMessage(
+                f"Répertoire prêt — cliquez « Traiter un répertoire » ({mode})."
+            )
+        else:
+            self._load_path(target_path)
+
+    def _load_path(self, path: Path) -> None:
+        """Charge et affiche l'image de *path* dans la vue principale.
+
+        Contrairement à l'ancienne ``_load_image``, ne déclenche aucun
+        dialogue : *path* est déjà connu (fourni par la fenêtre racine à la
+        construction).
+        """
         img = imread_oriented(path)
         if img is None:
             QMessageBox.critical(self, "Erreur", f"Impossible de lire : {path}")
@@ -1018,6 +1050,15 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
     # ------------------------------------------------------------------
 
     def _start_batch(self) -> None:
+        if self._batch_dir is None:
+            # Ne devrait pas arriver via l'UI (actionBatch n'est activée que
+            # si _apply_target a reçu un répertoire) — reste un garde-fou
+            # explicite plutôt qu'un plantage silencieux si jamais déclenché
+            # autrement (test, appel direct).
+            self.statusBar().showMessage(
+                "Aucun répertoire à traiter — relancez depuis Image Treatment."
+            )
+            return
         if self._current_engine is Engine.DUAL:
             QMessageBox.information(
                 self, "Traitement par lot",
@@ -1027,11 +1068,8 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
                 "couple par couple.",
             )
             return
-        directory = QFileDialog.getExistingDirectory(self, "Choisir un répertoire")
-        if not directory:
-            return
-        dir_path  = Path(directory)
-        recursive = self._combo_recursive.currentIndex() == 1
+        dir_path  = self._batch_dir
+        recursive = self._batch_recursive
         images    = _image_files(dir_path, recursive=recursive)
         if not images:
             QMessageBox.information(self, "Répertoire vide", "Aucune image trouvée.")
@@ -1073,28 +1111,6 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
             f" → sous-répertoire {self._pending_batch.value}"
         )
 
-
-    @pyqtSlot()
-    def on_btnDownloadModels_clicked(self) -> None:
-        """Ouvre le dialogue de téléchargement des poids des moteurs.
-
-        Lance _DownloadWorker dans un thread séparé et affiche la progression
-        dans _DownloadDialog.  Les fichiers déjà présents sont signalés et
-        ignorés (skip_existing=True dans download_models.download_all).
-        """
-        dlg    = _DownloadDialog(self)
-        worker = _DownloadWorker()
-        worker.file_start.connect(dlg.on_file_start)
-        worker.file_progress.connect(dlg.on_file_progress)
-        worker.file_done.connect(dlg.on_file_done)
-        worker.file_error.connect(dlg.on_file_error)
-        worker.all_done.connect(dlg.on_all_done)
-        worker.start()
-        dlg.exec()
-        if worker.isRunning():
-            worker.terminate()
-            worker.wait()
-
     def closeEvent(self, event) -> None:
         """Termine proprement les threads actifs avant de fermer la fenêtre.
 
@@ -1111,11 +1127,20 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
         super().closeEvent(event)
 
 
-def run_gui(model_path: Path | None = None) -> None:
-    """Lancer l'application Qt."""
+def run_gui() -> None:
+    """Lancer l'application Qt — ouvre la fenêtre racine « Image Treatment ».
+
+    Le point d'entrée n'est plus Media Restorer directement : c'est
+    :class:`~media_restorer.gui_root.ImageTreatmentWindow` qui choisit une
+    cible (fichier ou répertoire) et lance Media Restorer — ou tout autre
+    outil enregistré dans :mod:`media_restorer.extensions` — sur cette cible.
+    """
     import sys
+
+    from media_restorer.gui_root import ImageTreatmentWindow
+
     app    = QApplication(sys.argv)
     app.aboutToQuit.connect(app.closeAllWindows)
-    window = PhotoRestorationGUI(model_path=model_path)
+    window = ImageTreatmentWindow()
     window.show()
     sys.exit(app.exec())
