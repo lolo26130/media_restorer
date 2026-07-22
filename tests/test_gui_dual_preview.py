@@ -16,7 +16,7 @@ from media_restorer.engines.dual_engine import (
     MODE_FUSION,
     MODES,
 )
-from media_restorer.gui import (
+from media_restorer.extensions.media_restorer.gui import (
     _DUAL_LIVE_PARAMS,
     _DUAL_PREVIEW_MAX,
     PhotoRestorationGUI,

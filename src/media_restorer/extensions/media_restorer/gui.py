@@ -20,7 +20,6 @@ from pyqtgraph.parametertree import Parameter, ParameterTree
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
-    QApplication,
     QDialog,
     QDockWidget,
     QFileDialog,
@@ -38,7 +37,7 @@ from PyQt6.QtWidgets import (
 )
 
 from media_restorer.app_settings import TOOLTIP_MODE_KEY, app_settings
-from media_restorer.colab_calc import ColabCalc
+from media_restorer.extensions.media_restorer.colab_calc import ColabCalc
 from media_restorer.engines import ENGINE_PARAMS, Engine, build_engine
 from media_restorer.download_models import MODEL_REGISTRY
 from media_restorer.image_io import imread_oriented
@@ -123,8 +122,11 @@ def _image_files(directory: Path, *, recursive: bool) -> list[Path]:
 
 _UI_SRC  = Path(__file__).parent / "views" / "main.ui"
 _UI_PY   = Path(__file__).parent / "views" / "ui_main.py"
-_QRC_SRC = Path(__file__).parent / "resources" / "icons" / "media_restorer.qrc"
-_QRC_PY  = Path(__file__).parent / "resources" / "icons" / "media_restorer_rc.py"
+# resources/ reste au niveau racine du paquet (partagé entre la fenêtre
+# racine et toutes les extensions) — remonter de extensions/media_restorer/
+# jusqu'à media_restorer/ nécessite 2 niveaux, pas 1.
+_QRC_SRC = Path(__file__).parents[2] / "resources" / "icons" / "media_restorer.qrc"
+_QRC_PY  = Path(__file__).parents[2] / "resources" / "icons" / "media_restorer_rc.py"
 
 # Types de widgets inspectés par tooltips_from_code.
 # Chaque entrée : (type_Qt, préfixe_du_nom, signal).
@@ -136,8 +138,8 @@ _TOOLTIP_TYPES: list[tuple] = [
 compile_ui(_UI_SRC, _UI_PY)
 compile_qrc(_QRC_SRC, _QRC_PY)
 
-from media_restorer.resources.icons import media_restorer_rc as _rc  # noqa: F401, E402
-from media_restorer.views.ui_main import Ui_MainWindow               # noqa: E402
+from media_restorer.resources.icons import media_restorer_rc as _rc                        # noqa: F401, E402
+from media_restorer.extensions.media_restorer.views.ui_main import Ui_MainWindow            # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -1125,22 +1127,3 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
         for window in list(self._open_windows):
             window.close()
         super().closeEvent(event)
-
-
-def run_gui() -> None:
-    """Lancer l'application Qt — ouvre la fenêtre racine « Image Treatment ».
-
-    Le point d'entrée n'est plus Media Restorer directement : c'est
-    :class:`~media_restorer.gui_root.ImageTreatmentWindow` qui choisit une
-    cible (fichier ou répertoire) et lance Media Restorer — ou tout autre
-    outil enregistré dans :mod:`media_restorer.extensions` — sur cette cible.
-    """
-    import sys
-
-    from media_restorer.gui_root import ImageTreatmentWindow
-
-    app    = QApplication(sys.argv)
-    app.aboutToQuit.connect(app.closeAllWindows)
-    window = ImageTreatmentWindow()
-    window.show()
-    sys.exit(app.exec())

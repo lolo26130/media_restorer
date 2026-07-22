@@ -1,7 +1,8 @@
 """Fenêtre racine « Image Treatment » — point d'entrée de l'application.
 
 Mise en page définie dans ``views/root.ui`` (compilé automatiquement, même
-mécanisme que :mod:`media_restorer.gui` — voir :func:`OutilsQt.Utils_Qt.compile_ui`).
+mécanisme que :mod:`media_restorer.extensions.media_restorer.gui` — voir
+:func:`OutilsQt.Utils_Qt.compile_ui`).
 Choisit une cible (fichier ou répertoire), règle les préférences globales de
 l'application (mode des tooltips, apparence), puis lance l'un des outils
 enregistrés dans :mod:`media_restorer.extensions` — Media Restorer aujourd'hui,
@@ -42,7 +43,7 @@ class ImageTreatmentWindow(QMainWindow):
     """Fenêtre racine — sélection de cible, préférences globales, lancement d'un outil.
 
     Point d'entrée unique de l'application (voir
-    :func:`media_restorer.gui.run_gui`) : choisit un fichier ou un répertoire
+    :func:`~media_restorer.gui_root.run_gui`) : choisit un fichier ou un répertoire
     à traiter, règle les préférences globales (mode des tooltips, apparence),
     puis lance l'un des outils du registre :mod:`media_restorer.extensions` —
     Media Restorer aujourd'hui, d'autres outils demain sans modification de
@@ -72,10 +73,10 @@ class ImageTreatmentWindow(QMainWindow):
 
         # ── Registre d'extensions — peuplement dynamique du menu/toolbar ──
         # Importer le module d'une extension l'enregistre (voir
-        # media_restorer.extensions.media_restorer_ext) ; en ajouter une
+        # media_restorer.extensions.media_restorer) ; en ajouter une
         # nouvelle à l'avenir n'exige qu'une ligne d'import supplémentaire
         # ici, aucune autre modification de cette fenêtre.
-        import media_restorer.extensions.media_restorer_ext  # noqa: F401
+        import media_restorer.extensions.media_restorer  # noqa: F401
 
         self._launch_actions: list[QAction] = []
         for extension in all_extensions():
@@ -175,7 +176,7 @@ class ImageTreatmentWindow(QMainWindow):
         La fenêtre ouverte est mémorisée dans ``self._open_windows`` pour
         éviter sa libération prématurée par le ramasse-miettes Python — même
         précaution que
-        :meth:`~media_restorer.gui.PhotoRestorationGUI._register_window`
+        :meth:`~media_restorer.extensions.media_restorer.gui.PhotoRestorationGUI._register_window`
         pour les fenêtres de résultat de Media Restorer.
         """
         if self._target is None:
@@ -199,3 +200,21 @@ class ImageTreatmentWindow(QMainWindow):
         for window in list(self._open_windows):
             window.close()
         super().closeEvent(event)
+
+
+def run_gui() -> None:
+    """Lancer l'application Qt — ouvre la fenêtre racine « Image Treatment ».
+
+    Point d'entrée de l'application : ``cli.py`` n'importe que cette
+    fonction et n'a donc jamais besoin de connaître les extensions
+    (:mod:`media_restorer.extensions`) — c'est :class:`ImageTreatmentWindow`
+    qui choisit une cible (fichier ou répertoire) et lance Media Restorer, ou
+    tout autre outil enregistré, sur cette cible.
+    """
+    import sys
+
+    app    = QApplication(sys.argv)
+    app.aboutToQuit.connect(app.closeAllWindows)
+    window = ImageTreatmentWindow()
+    window.show()
+    sys.exit(app.exec())

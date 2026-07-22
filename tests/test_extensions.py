@@ -24,7 +24,7 @@ def register_fake():
     """``register()`` une extension factice, puis la retire à la fin du test.
 
     Ne touche qu'aux noms explicitement enregistrés par ce biais — jamais au
-    reste du registre.  C'est important : ``media_restorer_ext`` enregistre
+    reste du registre.  C'est important : ``media_restorer.extensions.media_restorer`` enregistre
     « Media Restorer » de façon *permanente* dès son import (c'est le
     comportement voulu, voir
     ``test_media_restorer_extension_is_registered_on_import`` plus bas), et
@@ -77,16 +77,16 @@ def test_extension_context_defaults_recursive_to_false():
 
 
 def test_media_restorer_extension_is_registered_on_import():
-    """Importer le module d'extension suffit à l'enregistrer (voir gui_root.py)."""
-    import media_restorer.extensions.media_restorer_ext as mre
+    """Importer le paquet d'extension suffit à l'enregistrer (voir gui_root.py)."""
+    import media_restorer.extensions.media_restorer as mre
 
     names = [e.name for e in all_extensions()]
     assert mre.MediaRestorerExtension.name in names
 
 
 def test_media_restorer_extension_launch_forwards_context(tmp_path, qtbot):
-    from media_restorer.extensions.media_restorer_ext import MediaRestorerExtension
-    from media_restorer.gui import PhotoRestorationGUI
+    from media_restorer.extensions.media_restorer import MediaRestorerExtension
+    from media_restorer.extensions.media_restorer.gui import PhotoRestorationGUI
 
     context = ExtensionContext(path=tmp_path, recursive=True)
     window = MediaRestorerExtension().launch(context)
@@ -95,3 +95,27 @@ def test_media_restorer_extension_launch_forwards_context(tmp_path, qtbot):
     assert isinstance(window, PhotoRestorationGUI)
     assert window._batch_dir == tmp_path
     assert window._batch_recursive is True
+
+
+def test_every_extension_icon_is_registered_in_the_shared_qrc():
+    """QIcon(":/icons/absent.png") ne lève jamais — juste une icône vide.
+
+    Ajouter une extension sans enregistrer son icône dans le .qrc partagé
+    produirait donc un bouton silencieusement vide dans la fenêtre racine,
+    sans aucune erreur visible avant l'exécution.  Ce test transforme l'oubli
+    en échec de suite, avant que quiconque ne voie le bouton vide.
+    """
+    import re
+    from pathlib import Path
+
+    import media_restorer
+
+    qrc_path = Path(media_restorer.__file__).parent / "resources" / "icons" / "media_restorer.qrc"
+    registered = set(re.findall(r"<file>([^<]+)</file>", qrc_path.read_text()))
+
+    for extension in all_extensions():
+        icon_name = extension.icon.removeprefix(":/icons/")
+        assert icon_name in registered, (
+            f"{extension.name} déclare l'icône {extension.icon!r}, absente de "
+            f"{qrc_path.name} — l'ajouter au .qrc (voir extensions/__init__.py)."
+        )

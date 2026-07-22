@@ -2,7 +2,7 @@
 
 Point d'entrée unique construisant l'objet ``QSettings`` partagé par les
 fenêtres de l'application (:class:`~media_restorer.gui_root.ImageTreatmentWindow`
-et :class:`~media_restorer.gui.PhotoRestorationGUI`).
+et :class:`~media_restorer.extensions.media_restorer.gui.PhotoRestorationGUI`).
 
 Pourquoi ce module existe
 -------------------------

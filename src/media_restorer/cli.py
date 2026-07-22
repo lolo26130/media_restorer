@@ -70,7 +70,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"Saved: {out}")
 
     elif args.command == "gui":
-        from media_restorer.gui import run_gui
+        from media_restorer.gui_root import run_gui
 
         run_gui()
 

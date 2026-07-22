@@ -9,8 +9,8 @@ Le point d'entrée de l'application est la fenêtre racine « Image Treatment »
 (:mod:`media_restorer.gui_root`) : elle choisit une cible (fichier ou
 répertoire) et une apparence/mode de tooltips, puis lance l'un des outils
 enregistrés dans :mod:`media_restorer.extensions` — Media Restorer
-aujourd'hui (:mod:`media_restorer.gui`), d'autres outils demain sans
-modification de la fenêtre racine.
+aujourd'hui (:mod:`media_restorer.extensions.media_restorer.gui`), d'autres
+outils demain sans modification de la fenêtre racine.
 
 .. toctree::
    :maxdepth: 2
@@ -26,8 +26,6 @@ modification de la fenêtre racine.
    api/gui_root
    api/extensions
    api/engines
-   api/colab
-   api/gui
    api/utils
 
 

@@ -11,7 +11,7 @@ résolution.
 import numpy as np
 import pytest
 
-from media_restorer.gui import ResultWindow
+from media_restorer.extensions.media_restorer.gui import ResultWindow
 
 
 @pytest.fixture

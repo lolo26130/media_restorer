@@ -98,7 +98,7 @@
     <bool>false</bool>
    </property>
    <property name="icon">
-    <iconset resource="../resources/icons/media_restorer.qrc">
+    <iconset resource="../../../resources/icons/media_restorer.qrc">
      <normaloff>:/icons/object-rotate-right.png</normaloff>:/icons/object-rotate-right.png
     </iconset>
    </property>
@@ -117,7 +117,7 @@
     <bool>false</bool>
    </property>
    <property name="icon">
-    <iconset resource="../resources/icons/media_restorer.qrc">
+    <iconset resource="../../../resources/icons/media_restorer.qrc">
      <normaloff>:/icons/document-save-2.png</normaloff>:/icons/document-save-2.png
     </iconset>
    </property>
@@ -133,7 +133,7 @@
   </action>
   <action name="actionBatch">
    <property name="icon">
-    <iconset resource="../resources/icons/media_restorer.qrc">
+    <iconset resource="../../../resources/icons/media_restorer.qrc">
      <normaloff>:/icons/system-file-manager-3.png</normaloff>:/icons/system-file-manager-3.png
     </iconset>
    </property>
@@ -149,7 +149,7 @@
   </action>
   <action name="actionColabConnect">
    <property name="icon">
-    <iconset resource="../resources/icons/media_restorer.qrc">
+    <iconset resource="../../../resources/icons/media_restorer.qrc">
      <normaloff>:/icons/preferences-system-network-2.png</normaloff>:/icons/preferences-system-network-2.png
     </iconset>
    </property>
@@ -168,7 +168,7 @@
     <bool>false</bool>
    </property>
    <property name="icon">
-    <iconset resource="../resources/icons/media_restorer.qrc">
+    <iconset resource="../../../resources/icons/media_restorer.qrc">
      <normaloff>:/icons/atom-32x32-14323.png</normaloff>:/icons/atom-32x32-14323.png
     </iconset>
    </property>
@@ -184,7 +184,7 @@
   </action>
   <action name="actionDownloadModels">
    <property name="icon">
-    <iconset resource="../resources/icons/media_restorer.qrc">
+    <iconset resource="../../../resources/icons/media_restorer.qrc">
      <normaloff>:/icons/gear--plus.png</normaloff>:/icons/gear--plus.png
     </iconset>
    </property>

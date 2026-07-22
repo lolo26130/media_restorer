@@ -3,14 +3,14 @@
 Depuis l'introduction de la fenêtre racine (ImageTreatmentWindow), Media
 Restorer ne choisit plus lui-même sa cible : elle lui est transmise à la
 construction.  Voir media_restorer.gui_root et
-media_restorer.extensions.media_restorer_ext.
+media_restorer.extensions.media_restorer.
 """
 import cv2
 import numpy as np
 import pytest
 
 from media_restorer.engines import Engine
-from media_restorer.gui import PhotoRestorationGUI
+from media_restorer.extensions.media_restorer.gui import PhotoRestorationGUI
 
 
 @pytest.fixture

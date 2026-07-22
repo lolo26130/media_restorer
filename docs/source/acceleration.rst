@@ -123,8 +123,8 @@ notebook Google Colab exposé via un tunnel `cloudflared
     App locale  ──POST /process──►  FastAPI (Colab GPU T4/L4)
                 ◄── image PNG base64 ──────────────────────────
 
-La classe :class:`~media_restorer.colab_calc.ColabCalc` est un **mixin pur
-Python** dont hérite :class:`~media_restorer.gui.PhotoRestorationGUI`.  Elle
+La classe :class:`~media_restorer.extensions.media_restorer.colab_calc.ColabCalc` est un **mixin pur
+Python** dont hérite :class:`~media_restorer.extensions.media_restorer.gui.PhotoRestorationGUI`.  Elle
 gère l'URL du tunnel, le worker de communication et le même signal
 ``result_ready`` que les moteurs locaux — le slot d'affichage et la sauvegarde
 sont identiques dans les deux cas.
@@ -176,7 +176,7 @@ Isolation de l'état Colab
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Les attributs de connexion (URL, worker) sont **name-mangés** dans
-:class:`~media_restorer.colab_calc.ColabCalc` (``__url`` →
+:class:`~media_restorer.extensions.media_restorer.colab_calc.ColabCalc` (``__url`` →
 ``_ColabCalc__url``) pour les isoler des attributs de la fenêtre principale.
 Les méthodes d'accès sont préfixées ``_colab__`` pour matérialiser cette
 frontière dans le code.
@@ -200,7 +200,7 @@ driver DRM panique :
     amdgpu 0000:65:00.0: [drm] *ERROR* flip_done timedout
     amdgpu 0000:65:00.0: [drm] *ERROR* [CRTC:88:crtc-2] commit wait timed out
 
-**Correction appliquée dans** :class:`~media_restorer.gui._BatchRestoreWorker` :
+**Correction appliquée dans** :class:`~media_restorer.extensions.media_restorer.gui._BatchRestoreWorker` :
 
 - ``torch.cuda.synchronize()`` — vide la file de kernels GPU après chaque
   image (sans cela les kernels ROCm se cumulent en mémoire tampon)

@@ -11,9 +11,9 @@ présents dans ce projet, par exemple
 :data:`~media_restorer.engines.ENGINE_PARAMS` ou
 :data:`~media_restorer.download_models.MODEL_REGISTRY`).
 
-:class:`~media_restorer.gui.PhotoRestorationGUI` (Media Restorer) est
+:class:`~media_restorer.extensions.media_restorer.gui.PhotoRestorationGUI` (Media Restorer) est
 elle-même enregistrée comme la première extension, via
-:mod:`~media_restorer.extensions.media_restorer_ext` — ce n'est pas un cas
+:mod:`~media_restorer.extensions.media_restorer` — ce n'est pas un cas
 spécial câblé en dur dans la fenêtre racine : c'est ce qui vérifie que
 l'abstraction ``Extension`` est effectivement suffisante pour un outil réel,
 plutôt que de la laisser purement théorique en attendant une deuxième
@@ -21,17 +21,32 @@ extension.
 
 Ajouter une extension
 ----------------------
-1. Créer un module sous ``src/media_restorer/extensions/`` définissant une
-   classe qui satisfait le protocole :class:`Extension` (``name``,
-   ``description``, ``icon``, ``launch``).
-2. Appeler :func:`register` sur une instance de cette classe, au niveau du
-   module (elle s'enregistre donc dès l'import du module).
-3. Importer ce module quelque part avant que la fenêtre racine ne peuple son
+1. Créer un sous-paquet isolé sous ``src/media_restorer/extensions/<nom>/``
+   (voir :mod:`~media_restorer.extensions.media_restorer` comme modèle : sa
+   fenêtre, son ``.ui``, ses modules propres n'en sortent pas).  Son
+   ``__init__.py`` définit une classe qui satisfait le protocole
+   :class:`Extension` (``name``, ``description``, ``icon``, ``launch``).
+2. Si ``icon`` référence un fichier pas déjà dans
+   ``resources/icons/media_restorer.qrc`` (partagé, voir plus bas), l'y
+   ajouter (fichier ``.png`` + entrée ``<file>``) — sinon
+   ``QIcon(icon).isNull()`` sera vrai en silence, sans erreur ni exception :
+   le test ``test_every_extension_icon_is_registered_in_the_shared_qrc``
+   (``tests/test_extensions.py``) est là pour transformer cet oubli en échec
+   de suite plutôt qu'en bouton vide découvert en production.
+3. Appeler :func:`register` sur une instance de cette classe, au niveau du
+   module (elle s'enregistre donc dès l'import du paquet).
+4. Importer ce paquet quelque part avant que la fenêtre racine ne peuple son
    menu — voir :meth:`~media_restorer.gui_root.ImageTreatmentWindow.__init__`,
-   qui importe explicitement chaque module d'extension connu.  Aucune autre
+   qui importe explicitement chaque paquet d'extension connu.  Aucune autre
    modification de la fenêtre racine n'est nécessaire : le menu et la
    toolbar « Extensions » se peuplent dynamiquement depuis
    :func:`all_extensions`.
+
+Les icônes (``resources/icons/``) restent centralisées et partagées entre la
+racine et toutes les extensions plutôt que dupliquées par extension : c'est
+déjà le cas d'usage réel de
+:data:`~media_restorer.extensions.media_restorer.MediaRestorerExtension.icon`,
+qui réutilise l'icône de l'action ``actionRestore`` de sa propre fenêtre.
 """
 from __future__ import annotations
 
@@ -87,7 +102,7 @@ class Extension(Protocol):
         La fenêtre retournée doit déjà être construite (mais peut ne pas
         être encore affichée — c'est l'appelant, la fenêtre racine, qui gère
         l'affichage et la durée de vie de la référence, exactement comme
-        :class:`~media_restorer.gui.PhotoRestorationGUI` le fait déjà pour
+        :class:`~media_restorer.extensions.media_restorer.gui.PhotoRestorationGUI` le fait déjà pour
         ses propres fenêtres de résultat).
         """
         ...
