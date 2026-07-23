@@ -3,8 +3,13 @@
     <file>folder-open.png</file>
     <file>object-rotate-right.png</file>
     <file>document-save-2.png</file>
+    <file>document-save-as.png</file>
     <file>system-file-manager-3.png</file>
     <file>gear--plus.png</file>
     <file>inode-directory.png</file>
+    <file>graph-32x32-14320.png</file>
+    <file>line-32x32-14282.png</file>
+    <file>media-playback-start.png</file>
+    <file>checkboard-32x32-456335.png</file>
   </qresource>
 </RCC>

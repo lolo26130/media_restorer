@@ -40,6 +40,7 @@ from media_restorer.app_settings import TOOLTIP_MODE_KEY, app_settings
 from media_restorer.extensions.media_restorer.colab_calc import ColabCalc
 from media_restorer.engines import ENGINE_PARAMS, Engine, build_engine
 from media_restorer.download_models import MODEL_REGISTRY
+from media_restorer.gui_widgets import ResultWindow
 from media_restorer.image_io import imread_oriented
 from media_restorer.power import performance_mode
 from OutilsQt.Utils_Qt import compile_ui, compile_qrc, tooltips_from_code
@@ -140,86 +141,6 @@ compile_qrc(_QRC_SRC, _QRC_PY)
 
 from media_restorer.resources.icons import media_restorer_rc as _rc                        # noqa: F401, E402
 from media_restorer.extensions.media_restorer.views.ui_main import Ui_MainWindow            # noqa: E402
-
-
-# ---------------------------------------------------------------------------
-# Fenêtre de résultat indépendante (une par moteur)
-# ---------------------------------------------------------------------------
-
-class ResultWindow(QMainWindow):
-    """Affiche l'image restaurée dans une fenêtre portant le nom du moteur."""
-
-    def __init__(self, engine_name: str, preserve_zoom: bool = False) -> None:
-        super().__init__()
-        self.setWindowTitle(engine_name)
-        self.resize(900, 700)
-        self._view = pg.ImageView()
-        self._view.ui.roiBtn.hide()
-        self._view.ui.menuBtn.hide()
-        self.setCentralWidget(self._view)
-        # Onglet Double-exposition : on y relance « Restaurer » pour comparer
-        # des réglages sur un même détail zoomé — perdre le zoom à chaque
-        # clic obligerait à re-zoomer à chaque comparaison.  Pour les autres
-        # moteurs, chaque résultat est cadré automatiquement comme avant.
-        self._preserve_zoom = preserve_zoom
-        self._has_content   = False
-
-    def show_image(self, img_bgr: np.ndarray) -> None:
-        """Affiche un nouveau résultat pleine résolution.
-
-        Cadre automatiquement la vue au premier affichage — rien à
-        préserver.  Aux affichages suivants, ne recadre que si
-        *preserve_zoom* est désactivé pour ce moteur.
-        """
-        auto_range = not (self._preserve_zoom and self._has_content)
-        self._set_image(img_bgr, auto_range=auto_range)
-        self._has_content = True
-        self.show()
-        self.raise_()
-        self.activateWindow()
-
-    def update_image(
-        self, img_bgr: np.ndarray, scale: tuple[float, float] | None = None
-    ) -> None:
-        """Remplace l'image ; réaffiche la fenêtre si elle avait été fermée.
-
-        Utilisé par l'aperçu interactif de l'onglet Double-exposition : pendant
-        que l'utilisateur déplace un slider sur une fenêtre déjà visible, ne
-        pas reprendre le focus ni recadrer la vue à chaque cran.
-
-        Mais si la fenêtre a été fermée entre-temps, la rouvrir plutôt que de
-        laisser le slider paraître sans effet : un ``update_image`` muet sur
-        une fenêtre invisible ne laisse à l'utilisateur aucun moyen de
-        comprendre pourquoi l'image ne change pas.
-
-        *scale* étire l'image sur l'aire qu'elle doit occuper dans la vue.
-        Indispensable pour un aperçu en résolution réduite : sans lui, une
-        image plus petite se dessine dans un coin du cadrage précédent — elle
-        change bien, mais hors du champ regardé, ce qui donne l'impression
-        que le slider n'agit pas.  Sans objet à la réouverture — il n'y a pas
-        de cadrage précédent à respecter, ``autoRange`` suffit.
-        """
-        was_visible = self.isVisible()
-        self._set_image(
-            img_bgr, auto_range=not was_visible, scale=scale if was_visible else None
-        )
-        if not was_visible:
-            self.show()
-            self.raise_()
-            self.activateWindow()
-
-    def _set_image(
-        self,
-        img_bgr: np.ndarray,
-        auto_range: bool,
-        scale: tuple[float, float] | None = None,
-    ) -> None:
-        rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB) if img_bgr.ndim == 3 else img_bgr
-        # scale=None → pyqtgraph applique une transformation identité, ce qui
-        # annule l'étirement d'un aperçu précédent.
-        self._view.setImage(
-            rgb, autoLevels=False, levels=(0, 255), autoRange=auto_range, scale=scale
-        )
 
 
 # ---------------------------------------------------------------------------

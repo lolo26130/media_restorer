@@ -30,3 +30,28 @@ Préférences persistantes
 
 .. automodule:: media_restorer.app_settings
    :members:
+
+Apparence (skin)
+------------------
+
+.. automodule:: media_restorer.theme
+   :members:
+
+Lecture d'images (orientation EXIF)
+--------------------------------------
+
+.. automodule:: media_restorer.image_io
+   :members:
+
+Opérations image partagées
+-----------------------------
+
+.. automodule:: media_restorer.imaging
+   :members:
+
+Widgets Qt partagés
+----------------------
+
+.. automodule:: media_restorer.gui_widgets
+   :members:
+   :show-inheritance:

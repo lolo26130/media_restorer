@@ -15,10 +15,21 @@ Architecture
     - gui.py          → fenêtre PhotoRestorationGUI (Media Restorer)
     - colab_calc.py   → mixin ColabCalc (QThread, propre à cette extension)
     - views/main.ui   → .ui de Media Restorer, compilé automatiquement
+  - extensions/vectorise/ → analyse topologique (GUDHI) et retraçage de dessins
+    - gui.py          → fenêtre VectoriseGUI (Vectorise)
+    - views/main.ui   → .ui de Vectorise, compilé automatiquement
 - engines/        → RealESRGAN, SwinIR, LaMa, GFPGAN, DualExposure (héritent de BaseEngine)
                     DualExposure = fusion front light / back light, sans réseau (OpenCV pur)
                     bibliothèque cœur, sans dépendance Qt — réutilisée par
                     restore.py (CLI photo) indépendamment de toute extension
+  - engines/vectorise/ → cœur de calcul de l'extension Vectorise, ne dérive
+                    PAS de BaseEngine (contrat différent — voir sa docstring) :
+                    topology.py (GUDHI : AlphaComplex + homologie persistante H0/H1
+                    → arbre couvrant minimal = squelette du dessin, sans
+                    scikit-image ni networkx), tracing.py (décomposition en
+                    traits, Python pur), texture.py, render.py, storage.py (HDF5)
+- imaging.py      → opérations image partagées (ex. lowpass(), utilisé par
+                    dual_engine.py ET engines/vectorise/texture.py)
 - download_models.py → téléchargement des poids (MODEL_REGISTRY), point
                     d'entrée autonome : python -m media_restorer.download_models
 - resources/icons/ → icônes partagées entre la racine et toutes les extensions
@@ -38,4 +49,16 @@ Architecture
 ## État actuel (suite)
     - [Colab implémenté : PhotoRestorationGUI hérite de ColabCalc (name mangling), voir extensions/media_restorer/colab_calc.py]
     - [fenêtre racine + registre d'extensions en place ; prochaine extension candidate : film.py (restauration vidéo, actuellement un stub CLI NotImplementedError, aucune GUI)]
+    - [extension Vectorise en place : get_outline/show/save/save_texture_from_image/select_texture/vectorise]
+
+## Piège connu — tests Qt avec de vrais QThread/pg.ImageView
+    Démarrer un vrai QThread (worker.start()) puis attendre son résultat via
+    une boucle d'événements imbriquée (qtbot.waitSignal, qtbot.waitUntil, ou
+    une QEventLoop manuelle) a provoqué un segfault reproductible une fois
+    assez de fenêtres pg.ImageView accumulées dans le même process de test
+    (voir tests/test_gui_vectorise.py::_run_get_outline). Dans les tests,
+    appeler worker.run() directement (méthode Python ordinaire, sans jamais
+    démarrer de vrai thread OS) au lieu de worker.start() + attente — mêmes
+    signaux émis, aucun risque. performance_mode() est neutralisé pour toute
+    la suite dans tests/conftest.py (fixture _no_real_power_management).
 

@@ -72,6 +72,35 @@ def exif_orientation(path: Path | str) -> int:
     return value if isinstance(value, int) and 1 <= value <= 8 else 1
 
 
+_EXIF_XRESOLUTION_TAG = 282
+_DEFAULT_DPI = 300.0
+
+
+def exif_dpi(path: Path | str) -> float:
+    """Résolution EXIF de *path* en points par pouce, ou 300 si absente.
+
+    Lit uniquement ``XResolution`` (tag 282) — les scans de ce projet sont
+    numérisés à résolution identique en X et Y, et une légère différence
+    n'aurait de toute façon aucun effet visible sur les usages qui en
+    dépendent (ex. :func:`~media_restorer.engines.vectorise.topology.px_to_mm`
+    pour l'affichage d'une largeur de crayon approximative).  Ne lève
+    jamais, par le même principe que :func:`exif_orientation`.
+    """
+    try:
+        from PIL import Image
+        with Image.open(str(path)) as pil:
+            value = pil.getexif().get(_EXIF_XRESOLUTION_TAG)
+    except Exception:
+        return _DEFAULT_DPI
+    if value is None:
+        return _DEFAULT_DPI
+    try:
+        dpi = float(value)
+    except (TypeError, ValueError):
+        return _DEFAULT_DPI
+    return dpi if dpi > 0 else _DEFAULT_DPI
+
+
 def apply_exif_orientation(img: np.ndarray, orientation: int) -> np.ndarray:
     """Applique la transformation EXIF *orientation* à *img*."""
     transform = _EXIF_TRANSFORMS.get(orientation)

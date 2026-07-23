@@ -23,6 +23,7 @@ import numpy as np
 
 from media_restorer.engines.base import BaseEngine
 from media_restorer.image_io import imread_oriented
+from media_restorer.imaging import lowpass as _shared_lowpass
 
 # Modes de fusion — l'ordre est celui proposé dans le ParameterTree.
 MODE_FONDU  = "fondu"
@@ -300,22 +301,12 @@ class DualExposureEngine(BaseEngine):
 
     @staticmethod
     def _lowpass(img: np.ndarray, radius: float) -> np.ndarray:
-        """Passe-bas gaussien de rayon *radius*, calculé en sous-résolution.
+        """Passe-bas gaussien de rayon *radius* — voir :func:`media_restorer.imaging.lowpass`.
 
-        Le résultat étant limité en bande, flouter une version réduite d'un
-        facteur ``radius // 4`` puis ré-agrandir est quasi exact (écart max
-        mesuré 2,5 niveaux sur 255) et ~13× plus rapide qu'un
-        ``GaussianBlur`` à pleine résolution.  Pour les petits rayons le
-        facteur retombe à 1 et le flou exact est utilisé.
+        Conservé ici comme fine enveloppe (au lieu d'un simple import direct
+        dans les appelants) pour ne pas casser l'API testée de cette classe.
         """
-        factor = max(1, int(radius // 4))
-        if factor == 1:
-            return cv2.GaussianBlur(img.astype(np.float32), (0, 0), radius)
-        h, w = img.shape[:2]
-        small = cv2.resize(img, (max(1, w // factor), max(1, h // factor)),
-                           interpolation=cv2.INTER_AREA)
-        small = cv2.GaussianBlur(small.astype(np.float32), (0, 0), radius / factor)
-        return cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
+        return _shared_lowpass(img, radius)
 
     def _detail_transfer(self, img_a: np.ndarray, img_b: np.ndarray) -> np.ndarray:
         """Basse fréquence d'un cliché + haute fréquence de l'autre."""
