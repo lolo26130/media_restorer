@@ -11,12 +11,13 @@ d'autres outils demain sans modification de cette fenêtre (voir
 """
 from __future__ import annotations
 
+import subprocess
 from functools import partial
 from pathlib import Path
 
-from PyQt6.QtGui import QAction, QIcon
+from PyQt6.QtGui import QAction, QDesktopServices, QIcon
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox
-from PyQt6.QtCore import pyqtSlot
+from PyQt6.QtCore import QUrl, pyqtSlot
 
 from media_restorer.app_settings import SKIN_KEY, TOOLTIP_MODE_KEY, app_settings
 from media_restorer.extensions import Extension, ExtensionContext, all_extensions
@@ -27,6 +28,12 @@ _UI_SRC  = Path(__file__).parent / "views" / "root.ui"
 _UI_PY   = Path(__file__).parent / "views" / "ui_root.py"
 _QRC_SRC = Path(__file__).parent / "resources" / "icons" / "media_restorer.qrc"
 _QRC_PY  = Path(__file__).parent / "resources" / "icons" / "media_restorer_rc.py"
+
+# src/media_restorer/gui_root.py → racine du dépôt (même remontée que
+# download_models._ROOT, à la même profondeur dans l'arborescence).
+_REPO_ROOT = Path(__file__).parents[2]
+_DOCS_SOURCE = _REPO_ROOT / "docs" / "source"
+_DOCS_HTML   = _REPO_ROOT / "docs" / "build" / "html"
 
 _TOOLTIP_TYPES: list[tuple] = [
     (QAction, "action", "triggered"),
@@ -70,6 +77,7 @@ class ImageTreatmentWindow(QMainWindow):
         # (même convention que PhotoRestorationGUI — voir gui.py).
         self.actionChooseFile      = self._ui.actionChooseFile
         self.actionChooseDirectory = self._ui.actionChooseDirectory
+        self.actionHelp            = self._ui.actionHelp
 
         # ── Registre d'extensions — peuplement dynamique du menu/toolbar ──
         # Importer le module d'une extension l'enregistre (voir
@@ -190,6 +198,49 @@ class ImageTreatmentWindow(QMainWindow):
         context = ExtensionContext(path=self._target, recursive=recursive)
         window = extension.launch(context)
         self._open_windows.append(window)
+
+    # ------------------------------------------------------------------
+    # Aide
+    # ------------------------------------------------------------------
+
+    @pyqtSlot()
+    def on_actionHelp_triggered(self) -> None:
+        """Ouvre la documentation Sphinx dans le navigateur par défaut.
+
+        Reconstruit la documentation (``uv run python -m sphinx``) si elle
+        n'a jamais été générée — même logique que ``open-docs.sh`` à la
+        racine du dépôt, pour ne jamais ouvrir un lien mort.  Le cas courant
+        (docs déjà construites) est instantané ; seule cette reconstruction
+        rare bloque brièvement l'interface (jusqu'à 2 min, au-delà desquelles
+        l'opération est abandonnée) — proportionné pour une action aussi
+        occasionnelle.
+        """
+        self._open_help()
+
+    def _open_help(self) -> None:
+        index = _DOCS_HTML / "index.html"
+        if not index.exists():
+            self.statusBar().showMessage("Documentation absente — construction en cours…")
+            QApplication.processEvents()
+            try:
+                # « uv run sphinx-build » échoue sur cette installation
+                # (« Failed to spawn: sphinx-build » — même symptôme que
+                # « uv run pytest », déjà rencontré dans ce projet) ;
+                # « uv run python -m sphinx » fonctionne de manière fiable.
+                subprocess.run(
+                    ["uv", "run", "python", "-m", "sphinx", "-b", "html",
+                     str(_DOCS_SOURCE), str(_DOCS_HTML), "-q"],
+                    check=True, cwd=_REPO_ROOT, timeout=120,
+                )
+            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as exc:
+                QMessageBox.critical(
+                    self, "Documentation",
+                    f"Impossible de construire la documentation :\n{exc}",
+                )
+                self.statusBar().showMessage("Échec de la construction de la documentation.")
+                return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(index)))
+        self.statusBar().showMessage(f"Documentation ouverte : {index}")
 
     def closeEvent(self, event) -> None:
         """Ferme aussi les fenêtres d'extension ouvertes depuis la racine.

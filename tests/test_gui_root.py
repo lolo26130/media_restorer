@@ -189,6 +189,75 @@ def test_first_launch_without_saved_preferences_defaults_to_docstrings_and_syste
 # Fermeture
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Aide
+# ---------------------------------------------------------------------------
+
+def test_open_help_uses_existing_docs_without_rebuilding(window, monkeypatch, tmp_path):
+    index = tmp_path / "index.html"
+    index.write_text("<html></html>")
+    monkeypatch.setattr("media_restorer.gui_root._DOCS_HTML", tmp_path)
+    run_calls = []
+    monkeypatch.setattr("media_restorer.gui_root.subprocess.run", lambda *a, **kw: run_calls.append(a))
+    opened = []
+    monkeypatch.setattr(
+        "media_restorer.gui_root.QDesktopServices.openUrl", lambda url: opened.append(url)
+    )
+
+    window._open_help()
+
+    assert not run_calls  # aucune reconstruction : l'index existait déjà
+    assert len(opened) == 1
+    assert str(index) in opened[0].toLocalFile()
+    assert str(index) in window.statusBar().currentMessage()
+
+
+def test_open_help_rebuilds_when_docs_are_missing(window, monkeypatch, tmp_path):
+    missing_html = tmp_path / "html"  # n'existe pas encore
+    monkeypatch.setattr("media_restorer.gui_root._DOCS_HTML", missing_html)
+
+    def _fake_build(cmd, **kwargs):
+        # simule sphinx-build en créant l'index attendu
+        missing_html.mkdir(parents=True, exist_ok=True)
+        (missing_html / "index.html").write_text("<html></html>")
+
+    monkeypatch.setattr("media_restorer.gui_root.subprocess.run", _fake_build)
+    opened = []
+    monkeypatch.setattr(
+        "media_restorer.gui_root.QDesktopServices.openUrl", lambda url: opened.append(url)
+    )
+
+    window._open_help()
+
+    assert len(opened) == 1  # la reconstruction a bien eu lieu puis ouvert le résultat
+
+
+def test_open_help_reports_a_failed_rebuild_without_crashing(window, monkeypatch, tmp_path):
+    import subprocess
+
+    missing_html = tmp_path / "html"
+    monkeypatch.setattr("media_restorer.gui_root._DOCS_HTML", missing_html)
+
+    def _boom(cmd, **kwargs):
+        raise subprocess.CalledProcessError(1, cmd)
+
+    monkeypatch.setattr("media_restorer.gui_root.subprocess.run", _boom)
+    shown = []
+    monkeypatch.setattr(
+        "media_restorer.gui_root.QMessageBox.critical", lambda *a, **kw: shown.append(a)
+    )
+    opened = []
+    monkeypatch.setattr(
+        "media_restorer.gui_root.QDesktopServices.openUrl", lambda url: opened.append(url)
+    )
+
+    window._open_help()  # ne doit pas lever
+
+    assert shown
+    assert not opened  # rien à ouvrir, la reconstruction a échoué
+    assert "chec" in window.statusBar().currentMessage().lower()
+
+
 def test_close_event_closes_windows_opened_from_the_root(window, tmp_path, qtbot):
     from PyQt6.QtWidgets import QMainWindow
 
