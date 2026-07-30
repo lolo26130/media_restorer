@@ -25,6 +25,11 @@ Architecture
                     puis adapté (sans importation) de TraiteImages
                     (classes/data_classes.py), mixins CommonQtMethods retirés
     - gui.py          → fenêtre ManualMousePointsGUI (Manual Mouse Points)
+    - config.py       → liste de repères persistée dans UN fichier TOML unique
+                    (~/.config/media_restorer/manual_mouse_points.toml, chemin
+                    dérivé de app_settings().fileName() → isolé en test via la
+                    redirection QSettings de conftest). Lecture tomllib (stdlib),
+                    écriture à la main (pas de tomli_w) via json.dumps par libellé
     - views/main.ui   → .ui, compilé automatiquement
 - engines/        → RealESRGAN, SwinIR, LaMa, GFPGAN, DualExposure (héritent de BaseEngine)
                     DualExposure = fusion front light / back light, sans réseau (OpenCV pur)
@@ -78,4 +83,11 @@ Architecture
     démarrer de vrai thread OS) au lieu de worker.start() + attente — mêmes
     signaux émis, aucun risque. performance_mode() est neutralisé pour toute
     la suite dans tests/conftest.py (fixture _no_real_power_management).
+
+    Corollaire (extension Manual Mouse Points) : ImageClick EST un pg.ImageView,
+    donc chaque fenêtre de test en crée un de plus et rapproche la suite du même
+    seuil d'accumulation — sans même de QThread. Correctif : fixture autouse
+    _flush_qt_deletions dans tests/test_gui_manual_mouse_points.py (processEvents
+    + gc.collect après chaque test) pour purger les deleteLater entre les tests.
+    Toute future extension à base de pg.ImageView devrait faire de même.
 

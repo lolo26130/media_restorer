@@ -14,12 +14,36 @@ import numpy as np
 import pytest
 from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtGui import QKeyEvent
-from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QInputDialog, QMessageBox
 
 # Importer le paquet enregistre l'extension (voir extensions/__init__.py) —
 # nécessaire pour le test d'icône ci-dessous, indépendamment de l'ordre des tests.
 import media_restorer.extensions.manual_mouse_points  # noqa: F401
 from media_restorer.extensions.manual_mouse_points.gui import ManualMousePointsGUI
+
+
+@pytest.fixture(autouse=True)
+def _flush_qt_deletions():
+    """Vide les suppressions Qt différées après chaque test de ce fichier.
+
+    ``ImageClick`` étant un ``pg.ImageView``, chaque fenêtre construite ici
+    ajoute une vue graphique de plus ; sans forcer le traitement des
+    ``deleteLater`` entre les tests, ces objets C++ s'accumulent sur toute la
+    session et rapprochent la suite du segfault d'accumulation déjà documenté
+    (voir ``.claude/CLAUDE.md`` et ``tests/conftest.py``).  Autouse → instancié
+    tôt, donc finalisé en dernier : s'exécute *après* que ``qtbot`` a fermé les
+    widgets du test, au bon moment pour purger ce qu'il vient de programmer.
+    """
+    yield
+    import gc
+
+    from PyQt6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is not None:
+        app.processEvents()
+        gc.collect()
+        app.processEvents()
 
 
 @pytest.fixture
@@ -29,8 +53,22 @@ def image_file(tmp_path):
     return path
 
 
-def _make_window(qtbot, target=None, runner=None):
-    win = ManualMousePointsGUI(target_path=target, exiftool_runner=runner)
+def _empty_read(args):
+    """Réponse d'``exiftool -UserComment -j`` pour une image sans nos repères."""
+    return json.dumps([{"SourceFile": "x.jpg"}])
+
+
+def _is_write(args):
+    """Vrai si *args* est un appel d'écriture (« -UserComment=… »)."""
+    return any(a.startswith("-UserComment=") for a in args)
+
+
+def _make_window(qtbot, target=None, runner=None, config_path=None):
+    # Par défaut, un runner « aucune métadonnée » : aucun test ne lance le vrai
+    # binaire exiftool à l'ouverture de l'image (qui lit désormais les repères).
+    win = ManualMousePointsGUI(
+        target_path=target, exiftool_runner=runner or _empty_read, config_path=config_path
+    )
     qtbot.addWidget(win)
     return win
 
@@ -101,8 +139,90 @@ def test_blank_labels_fall_back_to_defaults(qtbot, image_file):
 
 
 # ---------------------------------------------------------------------------
+# Persistance des libellés dans le TOML de l'extension
+# ---------------------------------------------------------------------------
+
+def test_labels_are_loaded_from_config_on_startup(qtbot, tmp_path):
+    from media_restorer.extensions.manual_mouse_points import config as cfg
+    cfg_file = tmp_path / "cfg.toml"
+    cfg.save_labels(["Mouth", "Chin", "Left Brow"], path=cfg_file)
+
+    win = _make_window(qtbot, config_path=cfg_file)
+
+    assert win._read_labels() == ["Mouth", "Chin", "Left Brow"]
+
+
+def test_add_label_extends_the_list_and_persists_to_config(qtbot, tmp_path, monkeypatch):
+    from media_restorer.extensions.manual_mouse_points import config as cfg
+    cfg_file = tmp_path / "cfg.toml"
+    win = _make_window(qtbot, config_path=cfg_file)
+    before = win._read_labels()
+
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **kw: ("Mouth", True))
+    win._on_add_label()
+
+    assert win._read_labels() == before + ["Mouth"]
+    assert "Mouth" in cfg.load_labels([], path=cfg_file)  # écrit sur disque
+
+
+def test_add_label_cancelled_changes_nothing(qtbot, tmp_path, monkeypatch):
+    cfg_file = tmp_path / "cfg.toml"
+    win = _make_window(qtbot, config_path=cfg_file)
+    before = win._read_labels()
+
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **kw: ("", False))  # annulé
+    win._on_add_label()
+
+    assert win._read_labels() == before
+    assert not cfg_file.exists()  # rien écrit
+
+
+def test_duplicate_label_is_not_added(qtbot, tmp_path, monkeypatch):
+    cfg_file = tmp_path / "cfg.toml"
+    win = _make_window(qtbot, config_path=cfg_file)
+
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **kw: ("Nose", True))  # déjà présent
+    win._on_add_label()
+
+    assert win._read_labels().count("Nose") == 1
+
+
+def test_editing_labels_persists_to_config(qtbot, tmp_path):
+    from media_restorer.extensions.manual_mouse_points import config as cfg
+    cfg_file = tmp_path / "cfg.toml"
+    win = _make_window(qtbot, config_path=cfg_file)
+
+    win._param_root.child("labels").setValue("Alpha\nBeta")
+
+    assert cfg.load_labels([], path=cfg_file) == ["Alpha", "Beta"]
+
+
+# ---------------------------------------------------------------------------
 # Désignation → activation de l'enregistrement
 # ---------------------------------------------------------------------------
+
+def test_marked_points_appear_in_the_dock(qtbot, image_file):
+    win = _make_window(qtbot, target=image_file)
+    assert win._results_label.text() == win._EMPTY_RESULTS
+
+    win.on_actionStartTagging_triggered()
+    _mark_sequence(win, [(10, 20), (30, 20), None, None, None])
+
+    text = win._results_label.text()
+    assert "Left Eye : (10, 20)" in text
+    assert "Right Eye : (30, 20)" in text
+    assert "Nose : (passé)" in text
+
+
+def test_dock_updates_live_as_each_point_is_marked(qtbot, image_file):
+    win = _make_window(qtbot, target=image_file)
+    win.on_actionStartTagging_triggered()
+
+    win._image_click._last_mouse_pos = (10, 20)
+    _send_key(win, Qt.Key.Key_Return)  # premier point, avant même le Q final
+
+    assert "Left Eye : (10, 20)" in win._results_label.text()
+
 
 def test_finishing_a_designation_enables_save(qtbot, image_file):
     win = _make_window(qtbot, target=image_file)
@@ -122,8 +242,17 @@ def test_finishing_a_designation_enables_save(qtbot, image_file):
 # ---------------------------------------------------------------------------
 
 def test_saving_asks_for_confirmation_and_writes_when_accepted(qtbot, image_file, monkeypatch):
-    calls = []
-    win = _make_window(qtbot, target=image_file, runner=lambda args: calls.append(args) or "")
+    writes = []
+
+    def runner(args):
+        # La lecture à l'ouverture passe aussi par ce runner : ne capturer que
+        # les écritures pour ne pas compter le read initial.
+        if _is_write(args):
+            writes.append(args)
+            return ""
+        return _empty_read(args)
+
+    win = _make_window(qtbot, target=image_file, runner=runner)
     win.on_actionStartTagging_triggered()
     _mark_sequence(win, [(10, 20), (30, 20), None, None, None])
 
@@ -131,16 +260,23 @@ def test_saving_asks_for_confirmation_and_writes_when_accepted(qtbot, image_file
                         lambda *a, **kw: QMessageBox.StandardButton.Yes)
     win.on_actionSaveToMetadata_triggered()
 
-    assert len(calls) == 1
-    tag = next(a for a in calls[0] if a.startswith("-UserComment="))
+    assert len(writes) == 1
+    tag = next(a for a in writes[0] if a.startswith("-UserComment="))
     payload = json.loads(tag[len("-UserComment="):])["media_restorer_landmarks"]
     assert payload == {"Left Eye": [10, 20], "Right Eye": [30, 20],
                        "Nose": None, "Left Ear": None, "Right Ear": None}
 
 
 def test_saving_is_cancelled_when_confirmation_declined(qtbot, image_file, monkeypatch):
-    calls = []
-    win = _make_window(qtbot, target=image_file, runner=lambda args: calls.append(args) or "")
+    writes = []
+
+    def runner(args):
+        if _is_write(args):
+            writes.append(args)
+            return ""
+        return _empty_read(args)
+
+    win = _make_window(qtbot, target=image_file, runner=runner)
     win.on_actionStartTagging_triggered()
     _mark_sequence(win, [(10, 20), (30, 20), None, None, None])
 
@@ -148,15 +284,18 @@ def test_saving_is_cancelled_when_confirmation_declined(qtbot, image_file, monke
                         lambda *a, **kw: QMessageBox.StandardButton.No)
     win.on_actionSaveToMetadata_triggered()
 
-    assert calls == []  # rien écrit
+    assert writes == []  # rien écrit
     assert "annul" in win.statusBar().currentMessage().lower()
 
 
 def test_save_failure_is_reported_without_crashing(qtbot, image_file, monkeypatch):
-    def _boom(args):
-        raise RuntimeError("exiftool introuvable")
+    def runner(args):
+        # Échoue seulement à l'écriture ; la lecture d'ouverture doit réussir.
+        if _is_write(args):
+            raise RuntimeError("exiftool introuvable")
+        return _empty_read(args)
 
-    win = _make_window(qtbot, target=image_file, runner=_boom)
+    win = _make_window(qtbot, target=image_file, runner=runner)
     win.on_actionStartTagging_triggered()
     _mark_sequence(win, [(10, 20), (30, 20), None, None, None])
 
@@ -199,6 +338,42 @@ def test_show_metadata_reports_when_none_stored(qtbot, image_file, monkeypatch):
 
     assert shown
     assert "aucun" in shown[0][2].lower()
+
+
+def test_stored_points_appear_on_open_in_metadata_list_and_overlay(qtbot, image_file):
+    from media_restorer.landmarks import LandmarkSet
+    stored = LandmarkSet(points={"Left Eye": (1, 2), "Nose": None}).to_json()
+    runner = lambda args: json.dumps([{"SourceFile": "x", "UserComment": stored}])
+
+    # L'ouverture (construction avec cible) déclenche la lecture automatique.
+    win = _make_window(qtbot, target=image_file, runner=runner)
+
+    # Liste « métadonnées » du dock, indépendante de la liste « souris ».
+    assert "Left Eye : (1, 2)" in win._metadata_label.text()
+    assert "Nose : (passé)" in win._metadata_label.text()
+    assert win._results_label.text() == win._EMPTY_RESULTS
+    # Superposition sur l'image : un point marqué (Nose passé non dessiné)
+    # → scatter + texte = 2 items existants.
+    assert len(win._image_click._existing_items) == 2
+
+
+def test_metadata_and_mouse_lists_stay_independent(qtbot, image_file):
+    from media_restorer.landmarks import LandmarkSet
+    stored = LandmarkSet(points={"Left Eye": (1, 2)}).to_json()
+
+    def runner(args):
+        if _is_write(args):
+            return ""
+        return json.dumps([{"SourceFile": "x", "UserComment": stored}])
+
+    win = _make_window(qtbot, target=image_file, runner=runner)
+    win.on_actionStartTagging_triggered()
+    _mark_sequence(win, [(50, 60), (10, 10), None, None, None])
+
+    # La liste souris reflète le pointage ; la liste métadonnées reste celle
+    # lue à l'ouverture — les deux ne se mélangent pas.
+    assert "Left Eye : (50, 60)" in win._results_label.text()
+    assert "Left Eye : (1, 2)" in win._metadata_label.text()
 
 
 # ---------------------------------------------------------------------------

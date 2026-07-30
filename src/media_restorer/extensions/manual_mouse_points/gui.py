@@ -19,6 +19,8 @@ from PyQt6.QtCore import Qt, pyqtSlot
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QDockWidget,
+    QInputDialog,
+    QLabel,
     QMainWindow,
     QMessageBox,
     QVBoxLayout,
@@ -26,6 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from media_restorer.app_settings import TOOLTIP_MODE_KEY, app_settings
+from media_restorer.extensions.manual_mouse_points import config as _config
 from media_restorer.extensions.manual_mouse_points.image_click import (
     DEFAULT_LABELS,
     ImageClick,
@@ -69,15 +72,24 @@ class ManualMousePointsGUI(QMainWindow):
         Substitut du lanceur ``exiftool`` pour les tests (voir
         :mod:`media_restorer.landmarks`) — évite de dépendre du vrai binaire
         et d'écrire sur disque pendant les tests.
+    config_path : Path | None
+        Fichier de configuration TOML des repères (voir
+        :mod:`~media_restorer.extensions.manual_mouse_points.config`).  ``None``
+        utilise l'emplacement standard ; les tests passent un fichier jetable.
     """
+
+    _EMPTY_RESULTS  = "Aucun repère désigné."
+    _EMPTY_METADATA = "Aucun repère lu dans les métadonnées."
 
     def __init__(
         self,
         target_path: Path | None = None,
         exiftool_runner: ExiftoolRunner | None = None,
+        config_path: Path | None = None,
     ) -> None:
         super().__init__()
         self._exiftool_runner = exiftool_runner
+        self._config_path = config_path or _config.config_path()
 
         self._target_path: Path | None = None
         self._tags: dict[str, tuple[int, int] | None] = {}
@@ -92,28 +104,61 @@ class ManualMousePointsGUI(QMainWindow):
         self.actionSaveToMetadata = self._ui.actionSaveToMetadata
         self.actionShowMetadata   = self._ui.actionShowMetadata
 
+        # Repères persistés dans le TOML de l'extension (à défaut, jeu par
+        # défaut) — mémorisés d'une session à l'autre.
+        initial_labels = _config.load_labels(DEFAULT_LABELS, path=self._config_path)
+
         # ── Vue de pointage ─────────────────────────────────────────────
         self._image_click = ImageClick()
-        self._image_click.setup(labels=list(DEFAULT_LABELS))
+        self._image_click.setup(labels=list(initial_labels))
         self._image_click.tagging_finished.connect(self._on_tagging_finished)
         self._image_click.point_marked.connect(self._on_point_marked)
         self._image_click.instruction_changed.connect(self.statusBar().showMessage)
         self._ui.imageLayout.addWidget(self._image_click)
 
-        # ── Dock Paramètres — libellés modifiables ──────────────────────
+        # ── Dock Paramètres — libellés modifiables et persistés ─────────
         self._param_root = Parameter.create(
             name="params", type="group",
-            children=[{
-                "name": "labels", "title": "Repères (un par ligne)",
-                "type": "text", "value": "\n".join(DEFAULT_LABELS),
-            }],
+            children=[
+                {
+                    "name": "labels", "title": "Repères (un par ligne)",
+                    "type": "text", "value": "\n".join(initial_labels),
+                },
+                {
+                    "name": "add_label", "title": "Ajouter un repère…",
+                    "type": "action",
+                },
+            ],
         )
+        # Toute édition du texte est persistée dans le TOML ; le bouton
+        # « Ajouter » ouvre une saisie puis passe par la même valeur (donc le
+        # même enregistrement).  Connexions après create() pour que la valeur
+        # initiale ci-dessus ne déclenche pas d'écriture parasite.
+        self._param_root.child("labels").sigValueChanged.connect(self._save_labels)
+        self._param_root.child("add_label").sigActivated.connect(self._on_add_label)
+
         tree = ParameterTree(showHeader=False)
         tree.setParameters(self._param_root)
+
+        # Deux listes indépendantes en lecture seule :
+        #  • les repères désignés à la souris (mis à jour en direct au marquage) ;
+        #  • les repères lus dans les métadonnées de l'image (à l'ouverture et
+        #    via « Afficher les repères enregistrés »).
+        self._results_label = QLabel(self._EMPTY_RESULTS)
+        self._metadata_label = QLabel(self._EMPTY_METADATA)
+        for lbl in (self._results_label, self._metadata_label):
+            lbl.setWordWrap(True)
+            lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
         container = QWidget()
         vlayout = QVBoxLayout(container)
         vlayout.setContentsMargins(0, 0, 0, 0)
         vlayout.addWidget(tree)
+        vlayout.addWidget(QLabel("<b>Repères désignés (souris) :</b>"))
+        vlayout.addWidget(self._results_label)
+        vlayout.addWidget(QLabel("<b>Repères enregistrés (métadonnées) :</b>"))
+        vlayout.addWidget(self._metadata_label)
+        vlayout.addStretch(1)
         dock = QDockWidget("Paramètres", self)
         dock.setAllowedAreas(
             Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
@@ -152,11 +197,41 @@ class ManualMousePointsGUI(QMainWindow):
         self._ui.actionStartTagging.setEnabled(True)
         self._ui.actionShowMetadata.setEnabled(True)
         self.statusBar().showMessage(f"Image chargée : {target_path}")
+        # Affiche d'emblée les repères déjà enregistrés (superposés sur l'image
+        # + liste métadonnées du dock), sans fenêtre modale : à l'ouverture,
+        # une image sans repères — ou un exiftool absent — ne doit pas
+        # interrompre l'utilisateur.
+        self._refresh_metadata_display(announce=False)
 
     def _read_labels(self) -> list[str]:
         raw = self._param_root.child("labels").value()
         labels = [line.strip() for line in raw.splitlines() if line.strip()]
         return labels or list(DEFAULT_LABELS)
+
+    def _on_add_label(self, *_args) -> None:
+        """Demande un nouveau repère et l'ajoute à la liste (puis la persiste).
+
+        Passe par la valeur du champ texte — l'écriture dans le TOML se fait
+        donc via le même chemin que l'édition manuelle
+        (:meth:`_save_labels`, sur ``sigValueChanged``).
+        """
+        text, ok = QInputDialog.getText(self, "Ajouter un repère", "Nom du repère :")
+        if not ok:
+            return
+        label = text.strip()
+        if not label:
+            return
+        current = self._read_labels()
+        if label in current:
+            self.statusBar().showMessage(f"« {label} » est déjà dans la liste.")
+            return
+        current.append(label)
+        self._param_root.child("labels").setValue("\n".join(current))
+        self.statusBar().showMessage(f"Repère ajouté : {label}")
+
+    def _save_labels(self, *_args) -> None:
+        """Enregistre la liste courante des repères dans le TOML de l'extension."""
+        _config.save_labels(self._read_labels(), path=self._config_path)
 
     # ------------------------------------------------------------------
     # Désignation
@@ -174,23 +249,52 @@ class ManualMousePointsGUI(QMainWindow):
         """
         self._image_click.data_setup(labels=self._read_labels())
         self._image_click.setFocus()
+        self._tags = {}
         self._ui.actionSaveToMetadata.setEnabled(False)
+        self._render_results()
         self.statusBar().showMessage(
             "Désignation en cours — survol + Entrée/Espace/Q (voir la consigne sur l'image)."
         )
 
     def _on_point_marked(self, label: str, point: object) -> None:
+        # Mise à jour en direct du panneau au fur et à mesure du marquage.
+        self._tags[label] = point
+        self._render_results()
         where = "passé" if point is None else f"({point[0]}, {point[1]})"
         self.statusBar().showMessage(f"{label} : {where}")
 
     def _on_tagging_finished(self, tags: dict) -> None:
         self._tags = dict(tags)
+        self._render_results()
         marked = sum(1 for v in tags.values() if v is not None)
         self._ui.actionSaveToMetadata.setEnabled(bool(tags))
         self.statusBar().showMessage(
             f"Désignation terminée — {marked}/{len(tags)} repère(s) marqué(s). "
             "« Enregistrer dans les métadonnées » est disponible."
         )
+
+    @staticmethod
+    def _format_points(points: dict[str, tuple[int, int] | None], empty_text: str) -> str:
+        """Formate *points* en texte pour un ``QLabel`` (un repère par ligne).
+
+        Un point à ``None`` (passé) est rendu « (passé) » ; l'absence totale de
+        repère renvoie *empty_text*.
+        """
+        if not points:
+            return empty_text
+        return "\n".join(
+            f"{label} : {'(passé)' if pt is None else f'({pt[0]}, {pt[1]})'}"
+            for label, pt in points.items()
+        )
+
+    def _render_results(self, points: dict[str, tuple[int, int] | None] | None = None) -> None:
+        """Rafraîchit la liste « repères désignés (souris) » (défaut : les repères courants)."""
+        points = self._tags if points is None else points
+        self._results_label.setText(self._format_points(points, self._EMPTY_RESULTS))
+
+    def _render_metadata(self, points: dict[str, tuple[int, int] | None]) -> None:
+        """Rafraîchit la liste « repères enregistrés (métadonnées) », indépendante de la précédente."""
+        self._metadata_label.setText(self._format_points(points, self._EMPTY_METADATA))
 
     # ------------------------------------------------------------------
     # Écriture dans les métadonnées
@@ -246,9 +350,20 @@ class ManualMousePointsGUI(QMainWindow):
         N'écrit rien : lit le tag ``UserComment`` et présente les repères
         trouvés (ou signale qu'il n'y en a aucun à notre schéma).
         """
-        self._show_metadata()
+        self._refresh_metadata_display(announce=True)
 
-    def _show_metadata(self) -> None:
+    def _refresh_metadata_display(self, *, announce: bool) -> None:
+        """Relit les repères des métadonnées et rafraîchit leurs affichages.
+
+        Met à jour la liste « métadonnées » du dock **et** la superposition sur
+        l'image (couleur distincte des repères désignés à la souris).  Ne touche
+        jamais à la liste « souris » ni aux repères en cours de désignation.
+
+        *announce* — utilisé par l'action « Afficher les repères enregistrés » :
+        signale par une fenêtre modale le résultat (liste, absence, ou erreur).
+        À ``False`` (ouverture de l'image), reste silencieux : l'affichage se
+        met simplement à jour, sans interrompre l'utilisateur.
+        """
         if self._target_path is None:
             return
         try:
@@ -256,23 +371,28 @@ class ManualMousePointsGUI(QMainWindow):
                 self._target_path, runner=self._exiftool_runner
             )
         except Exception as exc:
-            QMessageBox.critical(self, "Erreur — lecture des métadonnées", str(exc))
+            if announce:
+                QMessageBox.critical(self, "Erreur — lecture des métadonnées", str(exc))
             self.statusBar().showMessage("Échec de la lecture des métadonnées.")
             return
+
+        self._render_metadata(landmarks.points)
+        self._image_click.show_existing_points(landmarks.points)
+
         if not landmarks.points:
+            if announce:
+                QMessageBox.information(
+                    self, "Repères enregistrés",
+                    "Aucun repère enregistré dans les métadonnées de cette image.",
+                )
+            self.statusBar().showMessage("Aucun repère enregistré dans les métadonnées.")
+            return
+
+        if announce:
             QMessageBox.information(
                 self, "Repères enregistrés",
-                "Aucun repère enregistré dans les métadonnées de cette image.",
+                self._format_points(landmarks.points, self._EMPTY_METADATA),
             )
-            self.statusBar().showMessage("Aucun repère enregistré.")
-            return
-        lines = [
-            f"{label} : {'(passé)' if pt is None else f'({pt[0]}, {pt[1]})'}"
-            for label, pt in landmarks.points.items()
-        ]
-        QMessageBox.information(
-            self, "Repères enregistrés", "\n".join(lines)
-        )
         self.statusBar().showMessage(
             f"{len(landmarks.points)} repère(s) lu(s) dans les métadonnées."
         )

@@ -71,6 +71,10 @@ class ImageClick(pg.ImageView):
         self._current_index = 0
         self._last_mouse_pos: tuple[int, int] | None = None
         self._annotation_items: list = []
+        # Repères déjà présents dans les métadonnées, superposés dans une autre
+        # couleur — gardés à part des annotations de pointage pour qu'un
+        # nouveau cycle de désignation (data_setup) ne les efface pas.
+        self._existing_items: list = []
         self.tags: dict[str, tuple[int, int] | None] = {}
         self.mode = ImageClickMode.READY_TO_BEGIN
 
@@ -130,7 +134,37 @@ class ImageClick(pg.ImageView):
         else:
             display = np.transpose(img, (1, 0, 2))
         self.setImage(display, autoLevels=False, levels=(0, 255))
+        self.clear_existing_points()  # nouvelle image → repères superposés obsolètes
         self.data_setup(self._labels)
+
+    def show_existing_points(self, points: dict[str, tuple[int, int] | None], color="g") -> None:
+        """Superpose des repères déjà connus (ex. lus dans les métadonnées).
+
+        Rendus dans une couleur distincte (*color*, vert par défaut) et avec un
+        symbole différent (croix) de ceux désignés à la souris (cercles rouges),
+        pour qu'on les distingue au premier coup d'œil.  Les points passés
+        (``None``) ne sont pas dessinés.  Remplace tout affichage précédent de
+        repères existants.
+        """
+        self.clear_existing_points()
+        view = self.getView()
+        for label, pt in points.items():
+            if pt is None:
+                continue
+            x, y = pt
+            scatter = pg.ScatterPlotItem([x], [y], size=12, brush=color, symbol="x")
+            view.addItem(scatter)
+            text = pg.TextItem(label, color=color)
+            text.setPos(x + 5, y - 10)
+            view.addItem(text)
+            self._existing_items.extend((scatter, text))
+
+    def clear_existing_points(self) -> None:
+        """Retire les repères superposés par :meth:`show_existing_points`."""
+        view = self.getView()
+        for item in self._existing_items:
+            view.removeItem(item)
+        self._existing_items.clear()
 
     # ------------------------------------------------------------------
     # Interaction
