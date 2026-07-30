@@ -86,6 +86,7 @@ class ImageTreatmentWindow(QMainWindow):
         # ici, aucune autre modification de cette fenêtre.
         import media_restorer.extensions.media_restorer  # noqa: F401
         import media_restorer.extensions.vectorise  # noqa: F401
+        import media_restorer.extensions.manual_mouse_points  # noqa: F401
 
         self._launch_actions: list[QAction] = []
         for extension in all_extensions():

@@ -18,6 +18,14 @@ Architecture
   - extensions/vectorise/ → analyse topologique (GUDHI) et retraçage de dessins
     - gui.py          → fenêtre VectoriseGUI (Vectorise)
     - views/main.ui   → .ui de Vectorise, compilé automatiquement
+  - extensions/manual_mouse_points/ → désignation de repères (yeux, bouche…)
+                    à la souris, stockés dans les métadonnées de l'image
+    - image_click.py  → widget ImageClick (pg.ImageView) : survol + Entrée/
+                    Espace/Q, signaux tagging_finished/point_marked. Copié
+                    puis adapté (sans importation) de TraiteImages
+                    (classes/data_classes.py), mixins CommonQtMethods retirés
+    - gui.py          → fenêtre ManualMousePointsGUI (Manual Mouse Points)
+    - views/main.ui   → .ui, compilé automatiquement
 - engines/        → RealESRGAN, SwinIR, LaMa, GFPGAN, DualExposure (héritent de BaseEngine)
                     DualExposure = fusion front light / back light, sans réseau (OpenCV pur)
                     bibliothèque cœur, sans dépendance Qt — réutilisée par
@@ -30,6 +38,12 @@ Architecture
                     traits, Python pur), texture.py, render.py, storage.py (HDF5)
 - imaging.py      → opérations image partagées (ex. lowpass(), utilisé par
                     dual_engine.py ET engines/vectorise/texture.py)
+- landmarks.py    → LandmarkSet : lecture/écriture de points nommés dans les
+                    métadonnées via exiftool (sous-processus, runner injectable
+                    pour les tests). Cœur sans Qt de l'extension
+                    manual_mouse_points. Duplique+recentre la gestion EXIF de
+                    DataImages (TraiteImages). Tag UserComment, JSON sous la
+                    clé « media_restorer_landmarks » ; exiftool garde <img>_original
 - download_models.py → téléchargement des poids (MODEL_REGISTRY), point
                     d'entrée autonome : python -m media_restorer.download_models
 - resources/icons/ → icônes partagées entre la racine et toutes les extensions
@@ -50,6 +64,9 @@ Architecture
     - [Colab implémenté : PhotoRestorationGUI hérite de ColabCalc (name mangling), voir extensions/media_restorer/colab_calc.py]
     - [fenêtre racine + registre d'extensions en place ; prochaine extension candidate : film.py (restauration vidéo, actuellement un stub CLI NotImplementedError, aucune GUI)]
     - [extension Vectorise en place : get_outline/show/save/save_texture_from_image/select_texture/vectorise]
+    - [extension Manual Mouse Points en place : désignation de repères à la
+       souris (image_click.py, copié de TraiteImages) + écriture dans les
+       métadonnées via exiftool (landmarks.py), avec confirmation utilisateur]
 
 ## Piège connu — tests Qt avec de vrais QThread/pg.ImageView
     Démarrer un vrai QThread (worker.start()) puis attendre son résultat via
