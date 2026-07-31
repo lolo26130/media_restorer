@@ -24,6 +24,7 @@ dependencies = [
     "simple-lama-inpainting>=0.1.0",
     "gudhi>=3.13.0",
     "h5py>=3.16.0",
+    "transformers>=4.40,<5",
 ]
 
 [project.optional-dependencies]

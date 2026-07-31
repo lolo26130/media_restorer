@@ -20,17 +20,37 @@ Architecture
     - views/main.ui   → .ui de Vectorise, compilé automatiquement
   - extensions/manual_mouse_points/ → désignation de repères (yeux, bouche…)
                     à la souris, stockés dans les métadonnées de l'image
-    - image_click.py  → widget ImageClick (pg.ImageView) : survol + Entrée/
-                    Espace/Q, signaux tagging_finished/point_marked. Copié
-                    puis adapté (sans importation) de TraiteImages
-                    (classes/data_classes.py), mixins CommonQtMethods retirés
-    - gui.py          → fenêtre ManualMousePointsGUI (Manual Mouse Points)
-    - config.py       → liste de repères persistée dans UN fichier TOML unique
+    - gui.py          → fenêtre ManualMousePointsGUI (Manual Mouse Points).
+                    Utilise le widget partagé image_click.py + landmark_config.py
+                    (déplacés au cœur, voir plus bas) + landmarks.py
+    - views/main.ui   → .ui, compilé automatiquement
+  - extensions/auto_face_id_register/ → détection AUTO de repères sur dessins/
+                    caricatures (là où les détecteurs entraînés sur photos
+                    échouent), puis revue/correction à la souris, puis
+                    enregistrement dans les métadonnées
+    - gui.py          → fenêtre AutoFaceIdRegisterGUI ; worker _DetectWorker
+                    (QThread, result_ready) ; réutilise ImageClick pour la
+                    correction (un « passer » garde la valeur détectée, seul un
+                    re-marquage écrase) ; repères détectés superposés en cyan
+    - config.py       → modèle de détection + appareil (detection_device
+                    cpu/gpu, DÉFAUT cpu car le GPU ROCm 780M peut se figer au
+                    chargement du modèle) choisis au 1er usage, persistés dans
+                    SON propre TOML (auto_face_id_register.toml) ; la LISTE de
+                    repères, elle, vient du landmark_config PARTAGÉ
+    - views/main.ui   → .ui, compilé automatiquement
+- image_click.py  → widget PARTAGÉ ImageClick (pg.ImageView) : survol + Entrée/
+                    Espace/Q, signaux tagging_finished/point_marked, overlay
+                    show_existing_points. Copié+adapté (sans import) de
+                    TraiteImages (data_classes.py), mixins CommonQtMethods
+                    retirés. Au cœur (pas dans une extension) → réutilisé par
+                    manual_mouse_points ET auto_face_id_register sans qu'elles
+                    dépendent l'une de l'autre (comme gui_widgets.ResultWindow)
+- landmark_config.py → liste de repères PARTAGÉE, persistée dans UN TOML unique
                     (~/.config/media_restorer/manual_mouse_points.toml, chemin
                     dérivé de app_settings().fileName() → isolé en test via la
                     redirection QSettings de conftest). Lecture tomllib (stdlib),
-                    écriture à la main (pas de tomli_w) via json.dumps par libellé
-    - views/main.ui   → .ui, compilé automatiquement
+                    écriture à la main (pas de tomli_w) via json.dumps par libellé.
+                    Au cœur car partagée par les deux extensions à repères
 - engines/        → RealESRGAN, SwinIR, LaMa, GFPGAN, DualExposure (héritent de BaseEngine)
                     DualExposure = fusion front light / back light, sans réseau (OpenCV pur)
                     bibliothèque cœur, sans dépendance Qt — réutilisée par
@@ -41,6 +61,14 @@ Architecture
                     → arbre couvrant minimal = squelette du dessin, sans
                     scikit-image ni networkx), tracing.py (décomposition en
                     traits, Python pur), texture.py, render.py, storage.py (HDF5)
+  - engines/face_id/ → cœur de auto_face_id_register, sans Qt, ne dérive PAS de
+                    BaseEngine. detect.py : détection ZERO-SHOT (vocabulaire
+                    ouvert) pilotée par la liste de repères = requêtes texte
+                    (« Left Eye » → « eye »), centre de la meilleure boîte,
+                    gauche/droite attribués par abscisse. build_detector() =
+                    pipeline transformers (import lourd différé, modèle
+                    téléchargé au 1er usage) ; detect_landmarks() prend un
+                    detector INJECTABLE → tests sans téléchargement ni inférence
 - imaging.py      → opérations image partagées (ex. lowpass(), utilisé par
                     dual_engine.py ET engines/vectorise/texture.py)
 - landmarks.py    → LandmarkSet : lecture/écriture de points nommés dans les
@@ -72,6 +100,12 @@ Architecture
     - [extension Manual Mouse Points en place : désignation de repères à la
        souris (image_click.py, copié de TraiteImages) + écriture dans les
        métadonnées via exiftool (landmarks.py), avec confirmation utilisateur]
+    - [extension Auto Face ID Register en place : détection zero-shot
+       (transformers, engines/face_id) des repères sur dessins + revue/
+       correction à la souris (ImageClick partagé) + enregistrement métadonnées.
+       image_click.py et landmark_config.py DÉPLACÉS au cœur (étaient dans
+       manual_mouse_points) pour partage sans dépendance inter-extensions.
+       Dépendance transformers ajoutée (uv add)]
 
 ## Piège connu — tests Qt avec de vrais QThread/pg.ImageView
     Démarrer un vrai QThread (worker.start()) puis attendre son résultat via

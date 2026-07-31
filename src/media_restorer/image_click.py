@@ -1,5 +1,12 @@
 """Désignation interactive de points nommés à la souris sur une image.
 
+Widget partagé (cœur, hors extension) : utilisé par l'extension
+:mod:`~media_restorer.extensions.manual_mouse_points` (désignation manuelle) et
+par :mod:`~media_restorer.extensions.auto_face_id_register` (revue/correction de
+repères détectés automatiquement).  Placé ici plutôt que dans une extension
+pour que les deux le réutilisent sans dépendre l'une de l'autre — même principe
+que :class:`~media_restorer.gui_widgets.ResultWindow`.
+
 Copié puis adapté — sans importation — de
 ``TraiteImages.classes.data_classes.ImageClick`` : même interaction clavier
 (survol souris, ``Entrée`` = marquer, ``Espace`` = passer, ``Q`` = terminer),

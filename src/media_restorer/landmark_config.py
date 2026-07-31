@@ -1,10 +1,17 @@
-"""Configuration persistante de l'extension Manual Mouse Points.
+"""Configuration persistante partagée de la liste des repères.
 
 Un **unique** fichier TOML — ``manual_mouse_points.toml`` — dans le répertoire
 de configuration de l'application (le même que celui du ``QSettings`` partagé,
-voir :func:`~media_restorer.app_settings.app_settings`), aujourd'hui la seule
-préférence propre à cette extension : la liste des repères proposés (« Left
-Eye », « Nose »… plus ceux que l'utilisateur ajoute).
+voir :func:`~media_restorer.app_settings.app_settings`) : la liste des repères
+proposés (« Left Eye », « Nose »… plus ceux que l'utilisateur ajoute).
+
+Module de cœur (hors extension) : la liste est **partagée** entre l'extension
+:mod:`~media_restorer.extensions.manual_mouse_points` (qui la propose au
+pointage manuel) et :mod:`~media_restorer.extensions.auto_face_id_register`
+(qui l'utilise comme requêtes de détection) — d'où sa place ici plutôt que dans
+l'une des deux, pour qu'elles ne dépendent pas l'une de l'autre.  Le nom de
+fichier reste ``manual_mouse_points.toml`` (l'extension historique) pour ne pas
+casser une configuration déjà écrite.
 
 Pourquoi un TOML écrit à la main
 --------------------------------

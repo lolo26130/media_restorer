@@ -5,7 +5,7 @@ touchent ni à ``QSettings`` ni à la vraie configuration de l'utilisateur.
 """
 import tomllib
 
-from media_restorer.extensions.manual_mouse_points import config as cfg
+from media_restorer import landmark_config as cfg
 
 _DEFAULT = ["Left Eye", "Right Eye", "Nose"]
 

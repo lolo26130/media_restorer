@@ -14,6 +14,7 @@ src/media_restorer/views/ui_root.py
 src/media_restorer/extensions/media_restorer/views/ui_main.py
 src/media_restorer/extensions/vectorise/views/ui_main.py
 src/media_restorer/extensions/manual_mouse_points/views/ui_main.py
+src/media_restorer/extensions/auto_face_id_register/views/ui_main.py
 src/media_restorer/resources/icons/media_restorer_rc.py
 # Poids des modèles — trop volumineux pour git
 # Utiliser: python -m media_restorer.download_models

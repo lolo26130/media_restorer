@@ -7,7 +7,7 @@ d'origine était un couteau suisse (chargement d'image, rotation, mise à
 l'échelle, alignement de visage *et* EXIF) ; on n'en garde ici que la brique
 métadonnées, réduite à un seul rôle : **stocker et relire un jeu de points
 nommés** (« Left Eye », « Nose »…) désignés à la souris (voir
-:class:`~media_restorer.extensions.manual_mouse_points.image_click.ImageClick`).
+:class:`~media_restorer.image_click.ImageClick`).
 
 Améliorations par rapport à la source
 -------------------------------------

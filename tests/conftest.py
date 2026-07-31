@@ -61,6 +61,7 @@ def _no_real_power_management(monkeypatch):
     targets = (
         "media_restorer.extensions.media_restorer.gui.performance_mode",
         "media_restorer.extensions.vectorise.gui.performance_mode",
+        "media_restorer.extensions.auto_face_id_register.gui.performance_mode",
     )
     for target in targets:
         module_path, _, _ = target.rpartition(".")

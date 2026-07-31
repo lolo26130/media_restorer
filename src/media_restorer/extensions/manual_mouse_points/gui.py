@@ -2,7 +2,7 @@
 
 Mise en page définie dans ``views/main.ui`` (compilée automatiquement, même
 mécanisme que :mod:`media_restorer.extensions.vectorise.gui`).  La fenêtre
-orchestre :class:`~media_restorer.extensions.manual_mouse_points.image_click.ImageClick`
+orchestre :class:`~media_restorer.image_click.ImageClick`
 (le pointage à la souris, inhérent à Qt) et
 :class:`~media_restorer.landmarks.LandmarkSet` (la lecture/écriture des repères
 dans les métadonnées, sans Qt) : charger l'image, désigner des repères, les
@@ -28,11 +28,8 @@ from PyQt6.QtWidgets import (
 )
 
 from media_restorer.app_settings import TOOLTIP_MODE_KEY, app_settings
-from media_restorer.extensions.manual_mouse_points import config as _config
-from media_restorer.extensions.manual_mouse_points.image_click import (
-    DEFAULT_LABELS,
-    ImageClick,
-)
+from media_restorer.image_click import DEFAULT_LABELS, ImageClick
+from media_restorer import landmark_config as _config
 from media_restorer.image_io import imread_oriented
 from media_restorer.landmarks import ExiftoolRunner, LandmarkSet
 from OutilsQt.Utils_Qt import compile_ui, compile_qrc, tooltips_from_code
@@ -74,7 +71,7 @@ class ManualMousePointsGUI(QMainWindow):
         et d'écrire sur disque pendant les tests.
     config_path : Path | None
         Fichier de configuration TOML des repères (voir
-        :mod:`~media_restorer.extensions.manual_mouse_points.config`).  ``None``
+        :mod:`~media_restorer.landmark_config`).  ``None``
         utilise l'emplacement standard ; les tests passent un fichier jetable.
     """
 

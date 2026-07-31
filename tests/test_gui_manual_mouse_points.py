@@ -143,7 +143,7 @@ def test_blank_labels_fall_back_to_defaults(qtbot, image_file):
 # ---------------------------------------------------------------------------
 
 def test_labels_are_loaded_from_config_on_startup(qtbot, tmp_path):
-    from media_restorer.extensions.manual_mouse_points import config as cfg
+    from media_restorer import landmark_config as cfg
     cfg_file = tmp_path / "cfg.toml"
     cfg.save_labels(["Mouth", "Chin", "Left Brow"], path=cfg_file)
 
@@ -153,7 +153,7 @@ def test_labels_are_loaded_from_config_on_startup(qtbot, tmp_path):
 
 
 def test_add_label_extends_the_list_and_persists_to_config(qtbot, tmp_path, monkeypatch):
-    from media_restorer.extensions.manual_mouse_points import config as cfg
+    from media_restorer import landmark_config as cfg
     cfg_file = tmp_path / "cfg.toml"
     win = _make_window(qtbot, config_path=cfg_file)
     before = win._read_labels()
@@ -188,7 +188,7 @@ def test_duplicate_label_is_not_added(qtbot, tmp_path, monkeypatch):
 
 
 def test_editing_labels_persists_to_config(qtbot, tmp_path):
-    from media_restorer.extensions.manual_mouse_points import config as cfg
+    from media_restorer import landmark_config as cfg
     cfg_file = tmp_path / "cfg.toml"
     win = _make_window(qtbot, config_path=cfg_file)
 
