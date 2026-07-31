@@ -204,9 +204,10 @@ class _BatchRestoreWorker(QThread):
     vsync (~3 cycles à 60 Hz) avant l'image suivante.
     """
 
-    image_done = pyqtSignal(str, float)  # filename, wall_seconds
-    all_done   = pyqtSignal(int, int)    # n_success, n_total
-    file_error = pyqtSignal(str, str)    # filename, message
+    image_start = pyqtSignal(str)         # chemin complet, AVANT traitement
+    image_done  = pyqtSignal(str, float)  # filename, wall_seconds
+    all_done    = pyqtSignal(int, int)    # n_success, n_total
+    file_error  = pyqtSignal(str, str)    # filename, message
 
     def __init__(
         self,
@@ -242,6 +243,7 @@ class _BatchRestoreWorker(QThread):
         with performance_mode():
             for img_path in images:
                 out_path = out_dir / img_path.relative_to(self._dir)
+                self.image_start.emit(str(img_path))  # chemin complet, avant traitement
                 t0       = time.monotonic()
                 try:
                     eng.restore_file(img_path, out_path)
@@ -414,7 +416,17 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
     recursive : bool
         Parcourt les sous-répertoires de *target_path* si c'est un
         répertoire.  Sans effet si *target_path* est un fichier ou ``None``.
+
+    Signaux
+    -------
+    current_image_changed(object)
+        Contrat optionnel consommé par la fenêtre racine (dock « Infos, Exif »,
+        voir :mod:`media_restorer.extensions`) : émet le ``Path`` de l'image en
+        cours pendant un traitement par lot, puis ``None`` à la fin du lot pour
+        que le dock revienne au résumé du répertoire.
     """
+
+    current_image_changed = pyqtSignal(object)  # Path | None
 
     def __init__(
         self,
@@ -1009,10 +1021,15 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
         self._batch_worker = _BatchRestoreWorker(
             dir_path, self._pending_batch, self._model_path, params, recursive
         )
+        self._batch_worker.image_start.connect(self._on_batch_image_start)
         self._batch_worker.image_done.connect(self._on_batch_image_done)
         self._batch_worker.file_error.connect(self._on_batch_file_error)
         self._batch_worker.all_done.connect(self._on_batch_all_done)
         self._batch_worker.start()
+
+    def _on_batch_image_start(self, path_str: str) -> None:
+        """Relaie l'image en cours vers le dock racine (contrat optionnel)."""
+        self.current_image_changed.emit(Path(path_str))
 
     def _on_batch_image_done(self, filename: str, wall_seconds: float) -> None:
         self._batch_done    += 1
@@ -1029,6 +1046,8 @@ class PhotoRestorationGUI(ColabCalc, QMainWindow):
 
     def _on_batch_all_done(self, n_success: int, n_total: int) -> None:
         self._ui.actionBatch.setEnabled(True)
+        # Fin de lot : le dock racine revient au résumé du répertoire.
+        self.current_image_changed.emit(None)
         self.statusBar().showMessage(
             f"Terminé — {n_success}/{n_total} image(s)"
             f" → sous-répertoire {self._pending_batch.value}"

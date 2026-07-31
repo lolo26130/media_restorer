@@ -16,10 +16,17 @@ from functools import partial
 from pathlib import Path
 
 from PyQt6.QtGui import QAction, QDesktopServices, QIcon
-from PyQt6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox
-from PyQt6.QtCore import QUrl, pyqtSlot
+from PyQt6.QtWidgets import (
+    QApplication,
+    QDockWidget,
+    QFileDialog,
+    QMainWindow,
+    QMessageBox,
+)
+from PyQt6.QtCore import Qt, QUrl, pyqtSlot
 
 from media_restorer.app_settings import SKIN_KEY, TOOLTIP_MODE_KEY, app_settings
+from media_restorer.gui_widgets import InfoExifPanel
 from media_restorer.extensions import Extension, ExtensionContext, all_extensions
 from media_restorer.theme import THEME_SYSTEM, apply_theme
 from OutilsQt.Utils_Qt import compile_ui, compile_qrc, tooltips_from_code
@@ -113,6 +120,20 @@ class ImageTreatmentWindow(QMainWindow):
         )
         self._setup_tooltips(self._ui.comboTooltipMode.currentText())
 
+        # ── Dock « Infos, Exif » ────────────────────────────────────────
+        # Métadonnées de la cible en temps réel (image → EXIF ; répertoire →
+        # résumé).  Pendant un traitement par lot lancé par une extension, il
+        # se met à jour sur l'image en cours si l'extension expose le signal
+        # optionnel ``current_image_changed`` — voir _launch et le contrat
+        # documenté dans media_restorer.extensions.
+        self._info_panel = InfoExifPanel()
+        self._info_dock = QDockWidget("Infos, Exif", self)
+        self._info_dock.setAllowedAreas(
+            Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
+        )
+        self._info_dock.setWidget(self._info_panel)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._info_dock)
+
     # ------------------------------------------------------------------
     # Tooltips
     # ------------------------------------------------------------------
@@ -176,6 +197,22 @@ class ImageTreatmentWindow(QMainWindow):
         self.statusBar().showMessage(f"Cible prête : {path}")
         for action in self._launch_actions:
             action.setEnabled(True)
+        self._refresh_info_dock()
+
+    def _refresh_info_dock(self) -> None:
+        """Réaffiche le dock « Infos, Exif » selon la cible courante.
+
+        Image → ses métadonnées ; répertoire → le résumé du dossier (nombre
+        d'images, taille).  C'est aussi l'état vers lequel le dock **revient**
+        à la fin d'un traitement par lot (voir :meth:`_on_extension_image`).
+        """
+        if self._target is None:
+            self._info_panel.clear()
+        elif self._is_directory:
+            recursive = self._ui.comboRecursive.currentIndex() == 1
+            self._info_panel.show_directory(self._target, recursive=recursive)
+        else:
+            self._info_panel.show_for_path(self._target)
 
     # ------------------------------------------------------------------
     # Lancement d'une extension
@@ -200,6 +237,27 @@ class ImageTreatmentWindow(QMainWindow):
         context = ExtensionContext(path=self._target, recursive=recursive)
         window = extension.launch(context)
         self._open_windows.append(window)
+
+        # Contrat optionnel : une extension qui traite plusieurs images peut
+        # exposer ``current_image_changed`` (voir media_restorer.extensions).
+        # On s'y branche par duck-typing — les extensions à image unique ne
+        # l'exposent pas.  La dernière fenêtre lancée pilote le dock (chaque
+        # _launch rebranche) — comportement voulu.
+        signal = getattr(window, "current_image_changed", None)
+        if signal is not None:
+            signal.connect(self._on_extension_image)
+
+    def _on_extension_image(self, path: Path | None) -> None:
+        """Met à jour le dock sur l'image en cours de traitement d'une extension.
+
+        Reçu du signal optionnel ``current_image_changed`` : un ``Path`` affiche
+        ses métadonnées ; ``None`` (fin de lot) fait revenir le dock au résumé
+        de la cible courante.
+        """
+        if path is None:
+            self._refresh_info_dock()
+        else:
+            self._info_panel.show_for_path(path)
 
     # ------------------------------------------------------------------
     # Aide

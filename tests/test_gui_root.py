@@ -1,4 +1,6 @@
 """Tests de la fenêtre racine ImageTreatmentWindow (media_restorer.gui_root)."""
+from pathlib import Path
+
 import pytest
 from PyQt6.QtGui import QPalette
 
@@ -64,6 +66,92 @@ def test_choosing_a_directory_enables_recursive_mode(window, tmp_path):
 
     assert window._ui.comboRecursive.isEnabled()
     assert all(a.isEnabled() for a in window._launch_actions)
+
+
+# ---------------------------------------------------------------------------
+# Dock « Infos, Exif »
+# ---------------------------------------------------------------------------
+
+def test_info_dock_is_present(window):
+    assert window._info_dock.windowTitle() == "Infos, Exif"
+
+
+def test_choosing_a_file_populates_the_info_dock(window, tmp_path):
+    reads = []
+    # read_fn/summary_fn injectés (comme exiftool_runner) — pas de vrai exiftool.
+    window._info_panel._read_fn = lambda p: reads.append(p) or {"Fichier": Path(p).name}
+    img = tmp_path / "photo.jpg"
+    img.write_bytes(b"\xff\xd8\xff")
+
+    window._set_target(img, is_directory=False)
+
+    assert reads == [img]
+    assert window._info_panel._table.rowCount() == 1
+
+
+def test_choosing_a_directory_shows_the_summary_not_a_file(window, tmp_path):
+    summaries = []
+    window._info_panel._summary_fn = (
+        lambda p, recursive=False: summaries.append((p, recursive)) or {"Images": "3"}
+    )
+    window._info_panel._read_fn = lambda p: {"Fichier": "NE DOIT PAS ÊTRE APPELÉ"}
+
+    window._set_target(tmp_path, is_directory=True)
+
+    assert summaries == [(tmp_path, False)]
+    assert window._info_panel._table.item(0, 1).text() == "3"
+
+
+def test_extension_current_image_changed_updates_then_reverts_dock(window, tmp_path, qtbot):
+    from PyQt6.QtWidgets import QMainWindow
+    from PyQt6.QtCore import pyqtSignal
+
+    reads, summaries = [], []
+    window._info_panel._read_fn = lambda p: reads.append(Path(p)) or {"Fichier": Path(p).name}
+    window._info_panel._summary_fn = (
+        lambda p, recursive=False: summaries.append(p) or {"Images": "0"}
+    )
+
+    class _BatchWindow(QMainWindow):
+        current_image_changed = pyqtSignal(object)
+
+    class _BatchExtension:
+        name, description, icon = "Batch", "test", ":/icons/gear--plus.png"
+
+        def launch(self, context):
+            return _BatchWindow()
+
+    window._set_target(tmp_path, is_directory=True)   # dock = résumé
+    assert len(summaries) == 1
+
+    window._launch(_BatchExtension())
+    launched = window._open_windows[-1]
+    qtbot.addWidget(launched)
+
+    # image en cours → métadonnées de cette image
+    img = tmp_path / "DSC_1006.JPG"
+    launched.current_image_changed.emit(img)
+    assert reads[-1] == img
+
+    # fin de lot (None) → retour au résumé du répertoire
+    launched.current_image_changed.emit(None)
+    assert len(summaries) == 2  # résumé réaffiché
+
+
+def test_single_image_extension_without_the_signal_is_fine(window, tmp_path, qtbot):
+    """Une extension à image unique n'expose pas le signal — aucun câblage, aucune erreur."""
+    from PyQt6.QtWidgets import QMainWindow
+
+    class _PlainExtension:
+        name, description, icon = "Plain", "test", ":/icons/gear--plus.png"
+
+        def launch(self, context):
+            win = QMainWindow()
+            qtbot.addWidget(win)
+            return win
+
+    window._set_target(tmp_path, is_directory=False)
+    window._launch(_PlainExtension())  # ne doit pas lever
 
 
 # ---------------------------------------------------------------------------

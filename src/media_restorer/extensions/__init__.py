@@ -47,6 +47,21 @@ racine et toutes les extensions plutôt que dupliquées par extension : c'est
 déjà le cas d'usage réel de
 :data:`~media_restorer.extensions.media_restorer.MediaRestorerExtension.icon`,
 qui réutilise l'icône de l'action ``actionRestore`` de sa propre fenêtre.
+
+Contrat optionnel — dock « Infos, Exif » de la racine
+-----------------------------------------------------
+Une fenêtre d'extension *peut* exposer un signal Qt ::
+
+    current_image_changed = pyqtSignal(object)  # Path | None
+
+La fenêtre racine s'y branche automatiquement (par duck-typing, après
+``launch``) pour tenir à jour son dock « Infos, Exif » pendant un traitement
+qui parcourt plusieurs images : émettre le ``Path`` de l'image en cours affiche
+ses métadonnées ; émettre ``None`` (fin de parcours) fait revenir le dock au
+résumé de la cible.  Les extensions à image unique n'ont rien à exposer — le
+signal est facultatif.  Exemple réel :
+:class:`~media_restorer.extensions.media_restorer.gui.PhotoRestorationGUI`,
+qui le relaie depuis son worker de traitement par lot.
 """
 from __future__ import annotations
 

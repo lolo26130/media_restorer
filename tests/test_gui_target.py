@@ -13,6 +13,29 @@ from media_restorer.engines import Engine
 from media_restorer.extensions.media_restorer.gui import PhotoRestorationGUI
 
 
+@pytest.fixture(autouse=True)
+def _flush_qt_deletions():
+    """Purge les suppressions Qt différées après chaque test.
+
+    ``PhotoRestorationGUI`` contient un ``pg.ImageView`` ; sans forcer le
+    traitement des ``deleteLater`` entre les tests, ces objets C++ s'accumulent
+    et rapprochent la suite du segfault d'accumulation documenté (voir
+    ``.claude/CLAUDE.md`` et ``tests/conftest.py``), d'autant plus qu'un test de
+    ce fichier démarre un vrai worker de lot.  Même fixture que
+    ``test_gui_manual_mouse_points.py`` / ``test_gui_auto_face_id_register.py``.
+    """
+    yield
+    import gc
+
+    from PyQt6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is not None:
+        app.processEvents()
+        gc.collect()
+        app.processEvents()
+
+
 @pytest.fixture
 def make_window(qtbot):
     created = []
@@ -94,3 +117,36 @@ def test_start_batch_uses_the_preset_directory_without_a_dialog(make_window, tmp
     win._start_batch()  # ne doit pas lever ni ouvrir de dialogue
 
     assert win._batch_worker is not None
+    # Arrête le vrai worker tout de suite : un QThread encore en vie au
+    # teardown est le déclencheur du segfault d'accumulation (voir CLAUDE.md).
+    if win._batch_worker.isRunning():
+        win._batch_worker.terminate()
+        win._batch_worker.wait()
+
+
+# ---------------------------------------------------------------------------
+# Contrat optionnel current_image_changed (dock « Infos, Exif » de la racine)
+# ---------------------------------------------------------------------------
+
+def test_batch_image_start_is_reemitted_as_a_path(make_window, tmp_path):
+    from pathlib import Path
+
+    win = make_window(target_path=tmp_path, recursive=False)
+    received = []
+    win.current_image_changed.connect(received.append)
+
+    win._on_batch_image_start(str(tmp_path / "DSC_1006.JPG"))
+
+    assert received == [tmp_path / "DSC_1006.JPG"]
+    assert isinstance(received[0], Path)
+
+
+def test_batch_all_done_reemits_none_to_revert_the_dock(make_window, tmp_path):
+    win = make_window(target_path=tmp_path, recursive=False)
+    win._pending_batch = win._current_engine  # lu par le message de statut de fin
+    received = []
+    win.current_image_changed.connect(received.append)
+
+    win._on_batch_all_done(0, 0)
+
+    assert received == [None]

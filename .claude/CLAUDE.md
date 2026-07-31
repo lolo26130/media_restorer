@@ -7,7 +7,13 @@ Architecture
 - gui_root.py     → fenêtre racine ImageTreatmentWindow (« Image Treatment »),
                     point d'entrée de l'app (cli.py → gui_root.run_gui()) ;
                     choisit une cible (fichier/répertoire) puis lance une
-                    extension du registre media_restorer.extensions
+                    extension du registre media_restorer.extensions.
+                    Dock « Infos, Exif » (InfoExifPanel) : métadonnées de la
+                    cible (image → EXIF ; répertoire → résumé). Se met à jour
+                    en direct sur l'image en cours pendant un traitement par
+                    lot si l'extension expose le signal OPTIONNEL
+                    current_image_changed(object) — Path affiche, None revient
+                    au résumé (contrat duck-typé, doc dans extensions/__init__)
 - views/root.ui   → .ui de la fenêtre racine, compilé automatiquement
 - extensions/     → registre léger (Extension, ExtensionContext, register(),
                     all_extensions()) — chaque extension = sous-paquet isolé
@@ -48,6 +54,10 @@ Architecture
                     retirés. Au cœur (pas dans une extension) → réutilisé par
                     manual_mouse_points ET auto_face_id_register sans qu'elles
                     dépendent l'une de l'autre (comme gui_widgets.ResultWindow)
+- exif_info.py    → lecteur de métadonnées SANS Qt pour le dock « Infos, Exif »
+                    (read_image_info / read_directory_summary). Un seul lecteur :
+                    exiftool -j (runner injectable comme landmarks.py), repli
+                    Pillow si exiftool absent — ne lève jamais
 - landmark_config.py → liste de repères PARTAGÉE, persistée dans UN TOML unique
                     (~/.config/media_restorer/manual_mouse_points.toml, chemin
                     dérivé de app_settings().fileName() → isolé en test via la
