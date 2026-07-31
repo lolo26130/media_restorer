@@ -18,11 +18,15 @@ Améliorations par rapport à la source
 - **Signaux Qt** (``point_marked``, ``tagging_finished``, ``instruction_changed``)
   au lieu d'un attribut ``self.show`` tantôt ``print`` tantôt ``QLabel`` : la
   fenêtre hôte réagit à la fin du marquage sans sonder l'état du widget.
-- **Coordonnées pixel correctes** : l'image est affichée transposée sur ses
+- **Coordonnées en pourcentage** : l'image est affichée transposée sur ses
   deux premiers axes (exigence d'affichage « à l'endroit » de pyqtgraph en
   ``col-major``, l'ordre par défaut du reste de l'application), ce qui fait
-  que ``mapSceneToView`` renvoie directement ``(x = colonne, y = ligne)`` —
-  les coordonnées pixel standard, prêtes à être stockées.
+  que ``mapSceneToView`` renvoie ``(x = colonne, y = ligne)`` en pixels.  Ces
+  pixels sont convertis en **pourcentage (0–100) de la largeur/hauteur** avant
+  d'être émis/stockés : les repères deviennent indépendants de la résolution
+  (aucune conversion lors d'un changement de résolution — voir
+  :mod:`media_restorer.landmarks`).  La conversion inverse (pourcentage →
+  pixel) sert uniquement à dessiner les repères sur la vue.
 - Focus clavier activé explicitement (``StrongFocus``), sans quoi ``Entrée``/
   ``Espace``/``Q`` n'atteindraient jamais ``keyPressEvent``.
 """
@@ -74,15 +78,21 @@ class ImageClick(pg.ImageView):
         super().__init__(parent)
         self._initialized = False
         self._labels: list[str] = list(DEFAULT_LABELS)
-        self._points: list[tuple[str, tuple[int, int] | None]] = []
+        self._points: list[tuple[str, tuple[float, float] | None]] = []
         self._current_index = 0
-        self._last_mouse_pos: tuple[int, int] | None = None
+        # Dernière position souris, en **pixels** de l'image (pour dessiner) ;
+        # convertie en pourcentage au moment de marquer.
+        self._last_mouse_pos: tuple[float, float] | None = None
+        # Dimensions de l'image affichée (largeur, hauteur) en pixels, pour les
+        # conversions pixel ↔ pourcentage.  ``None`` tant qu'aucune image.
+        self._img_w: int | None = None
+        self._img_h: int | None = None
         self._annotation_items: list = []
         # Repères déjà présents dans les métadonnées, superposés dans une autre
         # couleur — gardés à part des annotations de pointage pour qu'un
         # nouveau cycle de désignation (data_setup) ne les efface pas.
         self._existing_items: list = []
-        self.tags: dict[str, tuple[int, int] | None] = {}
+        self.tags: dict[str, tuple[float, float] | None] = {}
         self.mode = ImageClickMode.READY_TO_BEGIN
 
     def setup(self, labels: list[str] | None = None) -> None:
@@ -136,6 +146,7 @@ class ImageClick(pg.ImageView):
         image NumPy est ``(ligne, colonne[, canal])``.  Après transposition,
         ``mapSceneToView`` renvoie ``(x = colonne, y = ligne)``.
         """
+        self._img_h, self._img_w = int(img.shape[0]), int(img.shape[1])
         if img.ndim == 2:
             display = img.T
         else:
@@ -144,21 +155,38 @@ class ImageClick(pg.ImageView):
         self.clear_existing_points()  # nouvelle image → repères superposés obsolètes
         self.data_setup(self._labels)
 
-    def show_existing_points(self, points: dict[str, tuple[int, int] | None], color="g") -> None:
+    def _px_to_pct(self, x: float, y: float) -> tuple[float, float]:
+        """Pixel ``(x, y)`` → pourcentage ``(0–100)`` de la largeur/hauteur.
+
+        Multiplication avant division (``x*100/w``) : reste exact pour un pixel
+        entier quand la dimension divise ``x*100`` (évite ``7/100*100`` = 7.0000…1).
+        """
+        w = self._img_w or 1
+        h = self._img_h or 1
+        return (x * 100.0 / w, y * 100.0 / h)
+
+    def _pct_to_px(self, px: float, py: float) -> tuple[float, float]:
+        """Pourcentage ``(0–100)`` → pixel ``(x, y)`` pour le dessin sur la vue."""
+        w = self._img_w or 1
+        h = self._img_h or 1
+        return (px / 100.0 * w, py / 100.0 * h)
+
+    def show_existing_points(self, points: dict[str, tuple[float, float] | None], color="g") -> None:
         """Superpose des repères déjà connus (ex. lus dans les métadonnées).
 
-        Rendus dans une couleur distincte (*color*, vert par défaut) et avec un
-        symbole différent (croix) de ceux désignés à la souris (cercles rouges),
-        pour qu'on les distingue au premier coup d'œil.  Les points passés
-        (``None``) ne sont pas dessinés.  Remplace tout affichage précédent de
-        repères existants.
+        *points* est en **pourcentage** (0–100) ; converti en pixels pour le
+        dessin.  Rendus dans une couleur distincte (*color*, vert par défaut) et
+        avec un symbole différent (croix) de ceux désignés à la souris (cercles
+        rouges), pour qu'on les distingue au premier coup d'œil.  Les points
+        passés (``None``) ne sont pas dessinés.  Remplace tout affichage
+        précédent de repères existants.
         """
         self.clear_existing_points()
         view = self.getView()
         for label, pt in points.items():
             if pt is None:
                 continue
-            x, y = pt
+            x, y = self._pct_to_px(*pt)
             scatter = pg.ScatterPlotItem([x], [y], size=12, brush=color, symbol="x")
             view.addItem(scatter)
             text = pg.TextItem(label, color=color)
@@ -181,7 +209,7 @@ class ImageClick(pg.ImageView):
         view = self.getView()
         if view.sceneBoundingRect().contains(pos):
             p = view.mapSceneToView(pos)
-            self._last_mouse_pos = (int(p.x()), int(p.y()))
+            self._last_mouse_pos = (p.x(), p.y())  # pixels (float)
 
     def _update_instruction_text(self) -> None:
         if self._current_index < len(self._labels):
@@ -213,9 +241,10 @@ class ImageClick(pg.ImageView):
         if self._current_index >= len(self._labels) or self._last_mouse_pos is None:
             return
         self.mode = ImageClickMode.SELECT_IN_PROGRESS
-        x, y = self._last_mouse_pos
+        x, y = self._last_mouse_pos            # pixels (pour dessiner)
+        pct = self._px_to_pct(x, y)            # pourcentage (pour stocker/émettre)
         label = self._labels[self._current_index]
-        self._points.append((label, (x, y)))
+        self._points.append((label, pct))
 
         scatter = pg.ScatterPlotItem([x], [y], size=8, brush="r")
         view.addItem(scatter)
@@ -225,7 +254,7 @@ class ImageClick(pg.ImageView):
         self._annotation_items.extend((scatter, text))
 
         self._current_index += 1
-        self.point_marked.emit(label, (x, y))
+        self.point_marked.emit(label, pct)
 
     def _skip_current(self) -> None:
         if self._current_index >= len(self._labels):
@@ -250,6 +279,6 @@ class ImageClick(pg.ImageView):
             view.removeItem(item)
         self._annotation_items.clear()
 
-    def get_tags(self) -> dict[str, tuple[int, int] | None]:
-        """Repères désignés, sous la forme ``{label: (x, y) | None}``."""
+    def get_tags(self) -> dict[str, tuple[float, float] | None]:
+        """Repères désignés, ``{label: (x, y) | None}`` en pourcentage (0–100)."""
         return self.tags

@@ -44,12 +44,14 @@ def _sync_worker(monkeypatch):
 
 @pytest.fixture
 def image_file(tmp_path):
+    # 100×100 : un pixel (x, y) vaut exactement (x %, y %) — repères en pourcentage.
     path = tmp_path / "caricature.jpg"
-    cv2.imwrite(str(path), np.full((80, 60, 3), 180, np.uint8))
+    cv2.imwrite(str(path), np.full((100, 100, 3), 180, np.uint8))
     return path
 
 
-_DETECTED = {"Left Eye": (10, 20), "Right Eye": (30, 20), "Nose": (20, 35)}
+# Coordonnées de détection factices, en pourcentage (0–100).
+_DETECTED = {"Left Eye": (10.0, 20.0), "Right Eye": (30.0, 20.0), "Nose": (20.0, 35.0)}
 
 
 def _fake_detect(image, labels):
@@ -120,14 +122,14 @@ def test_detect_fills_points_and_enables_review_and_save(qtbot, image_file):
 
     win.on_actionDetect_triggered()
 
-    assert win._tags["Left Eye"] == (10, 20)
-    assert win._tags["Right Eye"] == (30, 20)
-    assert win._tags["Nose"] == (20, 35)
+    assert win._tags["Left Eye"] == (10.0, 20.0)
+    assert win._tags["Right Eye"] == (30.0, 20.0)
+    assert win._tags["Nose"] == (20.0, 35.0)
     assert win._ui.actionReview.isEnabled()
     assert win._ui.actionSaveToMetadata.isEnabled()
     # Superposition : 3 points trouvés → 3 × (scatter + texte) = 6 items.
     assert len(win._image_click._existing_items) == 6
-    assert "Left Eye : (10, 20)" in win._points_label.text()
+    assert "Left Eye : (10.0%, 20.0%)" in win._points_label.text()
 
 
 def test_detect_reports_unfound_labels_as_none(qtbot, image_file):

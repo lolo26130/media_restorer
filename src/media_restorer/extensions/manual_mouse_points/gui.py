@@ -257,7 +257,7 @@ class ManualMousePointsGUI(QMainWindow):
         # Mise à jour en direct du panneau au fur et à mesure du marquage.
         self._tags[label] = point
         self._render_results()
-        where = "passé" if point is None else f"({point[0]}, {point[1]})"
+        where = "passé" if point is None else f"({point[0]:.1f}%, {point[1]:.1f}%)"
         self.statusBar().showMessage(f"{label} : {where}")
 
     def _on_tagging_finished(self, tags: dict) -> None:
@@ -280,7 +280,7 @@ class ManualMousePointsGUI(QMainWindow):
         if not points:
             return empty_text
         return "\n".join(
-            f"{label} : {'(passé)' if pt is None else f'({pt[0]}, {pt[1]})'}"
+            f"{label} : {'(passé)' if pt is None else f'({pt[0]:.1f}%, {pt[1]:.1f}%)'}"
             for label, pt in points.items()
         )
 

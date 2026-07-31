@@ -117,7 +117,7 @@ def test_custom_label_becomes_its_own_query():
     assert res["Mouth"] == (45, 65)
 
 
-def test_large_image_is_downscaled_and_coords_scaled_back():
+def test_large_image_is_downscaled_and_result_is_resolution_independent():
     seen_shapes = []
 
     def detector(image, queries):
@@ -127,8 +127,10 @@ def test_large_image_is_downscaled_and_coords_scaled_back():
     big = np.zeros((2000, 2000, 3), np.uint8)
     res = detect_landmarks(big, ["Nose"], detector=detector, max_side=100)
 
-    assert max(seen_shapes[0]) == 100                 # le détecteur a vu l'image réduite
-    assert res["Nose"] == (1000, 1000)                # (50,50) ×20 → repère d'origine
+    assert max(seen_shapes[0]) == 100     # le détecteur a vu l'image réduite (100 px)
+    # Centre (50, 50) d'une image 100×100 → 50 % de la largeur/hauteur, quelle
+    # que soit la résolution d'origine.  Aucune conversion pixel à refaire.
+    assert res["Nose"] == (50.0, 50.0)
 
 
 def test_small_image_is_not_downscaled():
@@ -141,7 +143,7 @@ def test_small_image_is_not_downscaled():
     res = detect_landmarks(_IMG, ["Nose"], detector=detector, max_side=1536)
 
     assert seen_shapes[0] == (100, 100)               # pas de réduction
-    assert res["Nose"] == (35, 45)
+    assert res["Nose"] == (35.0, 45.0)                # centre (35,45) d'une image 100×100
 
 
 def test_grayscale_image_is_accepted():

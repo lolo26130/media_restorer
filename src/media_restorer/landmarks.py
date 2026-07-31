@@ -40,9 +40,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-# Un point : coordonnées pixel (x=colonne, y=ligne) dans l'image redressée,
-# ou ``None`` si l'utilisateur a explicitement passé ce repère.
-Point = tuple[int, int] | None
+# Un point : coordonnées en **pourcentage** (0–100) de la largeur (x) et de la
+# hauteur (y) de l'image, ou ``None`` si le repère a été passé.  Les
+# pourcentages sont indépendants de la résolution : aucune conversion n'est
+# nécessaire si l'image est redimensionnée (c'est tout l'intérêt de ce choix).
+Point = tuple[float, float] | None
 
 # Fonction qui lance ``exiftool`` avec *args* (sans le nom de l'exécutable) et
 # renvoie sa sortie standard.  Injectable pour les tests — voir _default_runner.
@@ -82,8 +84,9 @@ class LandmarkSet:
     Attributs
     ---------
     points : dict[str, Point]
-        Repère → coordonnées pixel ``(x, y)``, ou ``None`` si passé.  L'ordre
-        d'insertion (garanti par ``dict``) reflète l'ordre de désignation.
+        Repère → coordonnées ``(x, y)`` en **pourcentage** (0–100) de la
+        largeur/hauteur, ou ``None`` si passé.  L'ordre d'insertion (garanti
+        par ``dict``) reflète l'ordre de désignation.
     """
 
     points: dict[str, Point] = field(default_factory=dict)
@@ -91,9 +94,12 @@ class LandmarkSet:
     # -- Sérialisation JSON (indépendante du support de stockage) -----------
 
     def to_json(self) -> str:
-        """Charge utile JSON (une ligne) sous la clé de schéma reconnaissable."""
+        """Charge utile JSON (une ligne) sous la clé de schéma reconnaissable.
+
+        Coordonnées en pourcentage (float) — indépendantes de la résolution.
+        """
         serialisable = {
-            label: ([int(pt[0]), int(pt[1])] if pt is not None else None)
+            label: ([float(pt[0]), float(pt[1])] if pt is not None else None)
             for label, pt in self.points.items()
         }
         return json.dumps({_SCHEMA_KEY: serialisable}, ensure_ascii=False)
@@ -121,7 +127,7 @@ class LandmarkSet:
             if value is None:
                 points[label] = None
             elif isinstance(value, (list, tuple)) and len(value) == 2:
-                points[label] = (int(value[0]), int(value[1]))
+                points[label] = (float(value[0]), float(value[1]))
             # tout autre forme est ignorée (donnée corrompue) plutôt que fatale
         return cls(points=points)
 

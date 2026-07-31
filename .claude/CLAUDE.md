@@ -40,7 +40,10 @@ Architecture
     - views/main.ui   → .ui, compilé automatiquement
 - image_click.py  → widget PARTAGÉ ImageClick (pg.ImageView) : survol + Entrée/
                     Espace/Q, signaux tagging_finished/point_marked, overlay
-                    show_existing_points. Copié+adapté (sans import) de
+                    show_existing_points. Coordonnées émises/stockées en
+                    POURCENTAGE (0–100, float) de la largeur/hauteur (converties
+                    depuis/vers les pixels pour le dessin via _px_to_pct/
+                    _pct_to_px). Copié+adapté (sans import) de
                     TraiteImages (data_classes.py), mixins CommonQtMethods
                     retirés. Au cœur (pas dans une extension) → réutilisé par
                     manual_mouse_points ET auto_face_id_register sans qu'elles
@@ -73,10 +76,12 @@ Architecture
                     dual_engine.py ET engines/vectorise/texture.py)
 - landmarks.py    → LandmarkSet : lecture/écriture de points nommés dans les
                     métadonnées via exiftool (sous-processus, runner injectable
-                    pour les tests). Cœur sans Qt de l'extension
-                    manual_mouse_points. Duplique+recentre la gestion EXIF de
+                    pour les tests). Cœur sans Qt, partagé par manual_mouse_points
+                    ET auto_face_id_register. Duplique+recentre la gestion EXIF de
                     DataImages (TraiteImages). Tag UserComment, JSON sous la
-                    clé « media_restorer_landmarks » ; exiftool garde <img>_original
+                    clé « media_restorer_landmarks » ; exiftool garde <img>_original.
+                    Points en POURCENTAGE (0–100, float) → indépendants de la
+                    résolution, aucune conversion lors d'un changement de résolution
 - download_models.py → téléchargement des poids (MODEL_REGISTRY), point
                     d'entrée autonome : python -m media_restorer.download_models
 - resources/icons/ → icônes partagées entre la racine et toutes les extensions

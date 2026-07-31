@@ -48,8 +48,10 @@ def _flush_qt_deletions():
 
 @pytest.fixture
 def image_file(tmp_path):
+    # 100×100 : un pixel (x, y) vaut exactement (x %, y %) — les repères sont
+    # stockés en pourcentage (0–100), voir media_restorer.landmarks.
     path = tmp_path / "portrait.jpg"
-    cv2.imwrite(str(path), np.full((80, 60, 3), 180, np.uint8))
+    cv2.imwrite(str(path), np.full((100, 100, 3), 180, np.uint8))
     return path
 
 
@@ -209,8 +211,8 @@ def test_marked_points_appear_in_the_dock(qtbot, image_file):
     _mark_sequence(win, [(10, 20), (30, 20), None, None, None])
 
     text = win._results_label.text()
-    assert "Left Eye : (10, 20)" in text
-    assert "Right Eye : (30, 20)" in text
+    assert "Left Eye : (10.0%, 20.0%)" in text
+    assert "Right Eye : (30.0%, 20.0%)" in text
     assert "Nose : (passé)" in text
 
 
@@ -221,7 +223,7 @@ def test_dock_updates_live_as_each_point_is_marked(qtbot, image_file):
     win._image_click._last_mouse_pos = (10, 20)
     _send_key(win, Qt.Key.Key_Return)  # premier point, avant même le Q final
 
-    assert "Left Eye : (10, 20)" in win._results_label.text()
+    assert "Left Eye : (10.0%, 20.0%)" in win._results_label.text()
 
 
 def test_finishing_a_designation_enables_save(qtbot, image_file):
@@ -325,7 +327,7 @@ def test_show_metadata_reads_and_displays_stored_points(qtbot, image_file, monke
 
     assert shown
     body = shown[0][2]
-    assert "Left Eye" in body and "(1, 2)" in body and "Nose" in body
+    assert "Left Eye" in body and "(1.0%, 2.0%)" in body and "Nose" in body
 
 
 def test_show_metadata_reports_when_none_stored(qtbot, image_file, monkeypatch):
@@ -349,7 +351,7 @@ def test_stored_points_appear_on_open_in_metadata_list_and_overlay(qtbot, image_
     win = _make_window(qtbot, target=image_file, runner=runner)
 
     # Liste « métadonnées » du dock, indépendante de la liste « souris ».
-    assert "Left Eye : (1, 2)" in win._metadata_label.text()
+    assert "Left Eye : (1.0%, 2.0%)" in win._metadata_label.text()
     assert "Nose : (passé)" in win._metadata_label.text()
     assert win._results_label.text() == win._EMPTY_RESULTS
     # Superposition sur l'image : un point marqué (Nose passé non dessiné)
@@ -372,8 +374,8 @@ def test_metadata_and_mouse_lists_stay_independent(qtbot, image_file):
 
     # La liste souris reflète le pointage ; la liste métadonnées reste celle
     # lue à l'ouverture — les deux ne se mélangent pas.
-    assert "Left Eye : (50, 60)" in win._results_label.text()
-    assert "Left Eye : (1, 2)" in win._metadata_label.text()
+    assert "Left Eye : (50.0%, 60.0%)" in win._results_label.text()
+    assert "Left Eye : (1.0%, 2.0%)" in win._metadata_label.text()
 
 
 # ---------------------------------------------------------------------------

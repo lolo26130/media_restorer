@@ -90,7 +90,7 @@ def detect_landmarks(
     detector: Detector,
     min_score: float = 0.05,
     max_side: int | None = 1536,
-) -> dict[str, tuple[int, int] | None]:
+) -> dict[str, tuple[float, float] | None]:
     """Localise chaque repère de *labels* dans *image* via *detector*.
 
     Paramètres
@@ -108,17 +108,20 @@ def detect_landmarks(
         Score minimal d'une détection retenue.
     max_side : int | None
         Si le plus grand côté de *image* dépasse *max_side*, la détection tourne
-        sur une copie réduite à cette taille, puis les coordonnées sont
-        remises à l'échelle de l'image d'origine.  Indispensable en pratique :
-        un scan de plusieurs dizaines de mégapixels rendrait l'inférence
+        sur une copie réduite à cette taille.  Indispensable en pratique : un
+        scan de plusieurs dizaines de mégapixels rendrait l'inférence
         interminable (mesuré : > 9 min CPU sur 36 Mpx), sans gain de précision
-        pour localiser des repères.  ``None`` désactive la réduction.
+        pour localiser des repères.  Aucune conversion de coordonnées n'est
+        nécessaire (résultat en pourcentage).  ``None`` désactive la réduction.
 
     Retour
     ------
     dict[str, (x, y) | None]
-        Pour chaque libellé, le centre pixel (dans le repère de l'image
-        d'origine) de la boîte retenue, ou ``None`` si rien n'a été détecté.
+        Pour chaque libellé, le centre de la boîte retenue en **pourcentage**
+        (0–100) de la largeur/hauteur, ou ``None`` si rien n'a été détecté.  Le
+        pourcentage étant indépendant de la résolution, la réduction interne
+        (*max_side*) n'exige aucune remise à l'échelle : une fraction de l'image
+        réduite est la même fraction de l'image d'origine.
 
     Attribution gauche/droite
     -------------------------
@@ -127,7 +130,8 @@ def detect_landmarks(
     par abscisse : la plus à gauche au libellé « left », la plus à droite au
     libellé « right ».
     """
-    scaled, inv_scale = _downscale_for_detection(image, max_side)
+    scaled = _downscale_for_detection(image, max_side)
+    sh, sw = scaled.shape[0], scaled.shape[1]
 
     label_query = {label: _label_to_query(label) for label in labels}
     queries = list(dict.fromkeys(label_query.values()))
@@ -143,7 +147,7 @@ def detect_landmarks(
     for label in labels:
         labels_by_query[label_query[label]].append(label)
 
-    result: dict[str, tuple[int, int] | None] = {}
+    result: dict[str, tuple[float, float] | None] = {}
     for query, group_labels in labels_by_query.items():
         dets = sorted(by_query.get(query, []), key=lambda d: d["score"], reverse=True)
         dets = dets[: len(group_labels)]
@@ -152,7 +156,9 @@ def detect_landmarks(
         for i, label in enumerate(ordered_labels):
             if i < len(dets_by_x):
                 cx, cy = _box_center(dets_by_x[i]["box"])
-                result[label] = (int(round(cx * inv_scale)), int(round(cy * inv_scale)))
+                # Multiplication avant division : pourcentage exact quand la
+                # dimension divise ``centre*100`` (évite ``55/100*100`` = 55.0…1).
+                result[label] = (cx * 100.0 / sw, cy * 100.0 / sh)
             else:
                 result[label] = None
 
@@ -160,27 +166,22 @@ def detect_landmarks(
     return {label: result.get(label) for label in labels}
 
 
-def _downscale_for_detection(
-    image: np.ndarray, max_side: int | None
-) -> tuple[np.ndarray, float]:
-    """Réduit *image* pour que son plus grand côté ≤ *max_side*.
+def _downscale_for_detection(image: np.ndarray, max_side: int | None) -> np.ndarray:
+    """Réduit *image* pour que son plus grand côté ≤ *max_side* (inchangée sinon).
 
-    Retourne ``(image_réduite, facteur_inverse)`` où ``facteur_inverse``
-    remultiplie une coordonnée de l'image réduite vers l'image d'origine
-    (``1.0`` si aucune réduction).
+    Utile pour la vitesse d'inférence ; aucune remise à l'échelle des
+    coordonnées n'est nécessaire car la détection renvoie des pourcentages.
     """
     if max_side is None:
-        return image, 1.0
+        return image
     h, w = image.shape[:2]
-    longest = max(h, w)
-    if longest <= max_side:
-        return image, 1.0
-    scale = max_side / longest
-    resized = cv2.resize(
+    if max(h, w) <= max_side:
+        return image
+    scale = max_side / max(h, w)
+    return cv2.resize(
         image, (max(1, round(w * scale)), max(1, round(h * scale))),
         interpolation=cv2.INTER_AREA,
     )
-    return resized, 1.0 / scale
 
 
 def build_detector(model_name: str, *, device: str = "cpu") -> Detector:

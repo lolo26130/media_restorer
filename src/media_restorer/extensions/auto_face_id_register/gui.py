@@ -241,7 +241,7 @@ class AutoFaceIdRegisterGUI(QMainWindow):
         if not points:
             return empty_text
         return "\n".join(
-            f"{label} : {'(non trouvé)' if pt is None else f'({pt[0]}, {pt[1]})'}"
+            f"{label} : {'(non trouvé)' if pt is None else f'({pt[0]:.1f}%, {pt[1]:.1f}%)'}"
             for label, pt in points.items()
         )
 
@@ -405,7 +405,7 @@ class AutoFaceIdRegisterGUI(QMainWindow):
         if point is not None:
             self._tags[label] = point
             self._render_points()
-            self.statusBar().showMessage(f"{label} : ({point[0]}, {point[1]})")
+            self.statusBar().showMessage(f"{label} : ({point[0]:.1f}%, {point[1]:.1f}%)")
 
     def _on_review_finished(self, tags: dict) -> None:
         # Fusionne : les repères re-marqués écrasent, les repères passés gardent
