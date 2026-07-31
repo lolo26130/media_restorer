@@ -55,9 +55,13 @@ Architecture
                     manual_mouse_points ET auto_face_id_register sans qu'elles
                     dépendent l'une de l'autre (comme gui_widgets.ResultWindow)
 - exif_info.py    → lecteur de métadonnées SANS Qt pour le dock « Infos, Exif »
-                    (read_image_info / read_directory_summary). Un seul lecteur :
-                    exiftool -j (runner injectable comme landmarks.py), repli
-                    Pillow si exiftool absent — ne lève jamais
+                    (read_image_info / read_directory_summary). Renvoie une
+                    hiérarchie {groupe: {tag: valeur}} via exiftool -g -j
+                    (regroupement par provenance : File/EXIF/XMP/MakerNotes…,
+                    runner injectable comme landmarks.py), repli Pillow (groupe
+                    « Image ») si exiftool absent — ne lève jamais. InfoExifPanel
+                    (gui_widgets) l'affiche en QTreeWidget repliable (pas
+                    pg.DataTreeWidget : 2 colonnes propres, sans colonne « type »)
 - landmark_config.py → liste de repères PARTAGÉE, persistée dans UN TOML unique
                     (~/.config/media_restorer/manual_mouse_points.toml, chemin
                     dérivé de app_settings().fileName() → isolé en test via la

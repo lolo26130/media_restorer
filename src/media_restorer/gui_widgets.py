@@ -16,8 +16,8 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
     QMainWindow,
-    QTableWidget,
-    QTableWidgetItem,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -110,9 +110,15 @@ class InfoExifPanel(QWidget):
     """Panneau lecture seule des métadonnées d'une image ou d'un répertoire.
 
     Utilisé dans le dock « Infos, Exif » de la fenêtre racine
-    (:class:`~media_restorer.gui_root.ImageTreatmentWindow`).  Reçoit un chemin,
-    affiche les infos lues par :mod:`media_restorer.exif_info` (cœur sans Qt)
-    dans un ``QTableWidget`` clé/valeur.
+    (:class:`~media_restorer.gui_root.ImageTreatmentWindow`).  Affiche les infos
+    lues par :mod:`media_restorer.exif_info` (cœur sans Qt) sous forme
+    **hiérarchique** : un ``QTreeWidget`` où chaque groupe de provenance (``File``,
+    ``EXIF``, ``XMP``, ``MakerNotes``…) est un nœud parent repliable, ses tags en
+    enfants clé/valeur.  Cliquer sur la flèche d'un groupe le replie.
+
+    ``QTreeWidget`` plutôt que ``pyqtgraph.DataTreeWidget`` : deux colonnes
+    propres (Propriété/Valeur) sans la colonne « type » superflue de ce dernier,
+    et maîtrise totale de l'ordre des groupes.
 
     Les fonctions de lecture sont injectables (``read_fn`` / ``summary_fn``) pour
     les tests — même motif que le ``exiftool_runner`` de
@@ -132,21 +138,21 @@ class InfoExifPanel(QWidget):
         self._read_fn = read_fn or exif_info.read_image_info
         self._summary_fn = summary_fn or exif_info.read_directory_summary
 
-        self._table = QTableWidget(0, 2, self)
-        self._table.setHorizontalHeaderLabels(["Propriété", "Valeur"])
-        self._table.verticalHeader().setVisible(False)
-        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        header = self._table.horizontalHeader()
+        self._tree = QTreeWidget(self)
+        self._tree.setColumnCount(2)
+        self._tree.setHeaderLabels(["Propriété", "Valeur"])
+        self._tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._tree.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        header = self._tree.header()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self._table)
+        layout.addWidget(self._tree)
 
     def show_for_path(self, path: Path) -> None:
-        """Affiche les métadonnées de l'image *path*."""
+        """Affiche les métadonnées de l'image *path* (arbre par provenance)."""
         self._fill(self._read_fn(path))
 
     def show_directory(self, path: Path, *, recursive: bool = False) -> None:
@@ -154,11 +160,14 @@ class InfoExifPanel(QWidget):
         self._fill(self._summary_fn(path, recursive=recursive))
 
     def clear(self) -> None:
-        """Vide le tableau (aucune cible)."""
-        self._table.setRowCount(0)
+        """Vide l'arbre (aucune cible)."""
+        self._tree.clear()
 
-    def _fill(self, info: dict) -> None:
-        self._table.setRowCount(len(info))
-        for row, (key, value) in enumerate(info.items()):
-            self._table.setItem(row, 0, QTableWidgetItem(str(key)))
-            self._table.setItem(row, 1, QTableWidgetItem(str(value)))
+    def _fill(self, grouped: dict) -> None:
+        """Peuple l'arbre depuis ``{groupe: {tag: valeur}}`` — groupes dépliés."""
+        self._tree.clear()
+        for group, entries in grouped.items():
+            parent = QTreeWidgetItem(self._tree, [str(group), ""])
+            for key, value in entries.items():
+                QTreeWidgetItem(parent, [str(key), str(value)])
+            parent.setExpanded(True)

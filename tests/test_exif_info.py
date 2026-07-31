@@ -1,7 +1,8 @@
 """Tests du lecteur de métadonnées (media_restorer.exif_info), sans Qt.
 
 Le runner ``exiftool`` est toujours injecté : aucun test ne lance le vrai
-binaire.  Le repli Pillow est exercé en faisant échouer le runner.
+binaire.  Le repli Pillow est exercé en faisant échouer le runner.  Les
+métadonnées sont hiérarchisées par provenance : ``{groupe: {tag: valeur}}``.
 """
 import json
 
@@ -11,58 +12,73 @@ import numpy as np
 from media_restorer import exif_info
 
 
-def _exiftool_json(**tags):
-    record = {"SourceFile": "x.jpg", **tags}
+def _exiftool_g_json(**groups):
+    """Reproduit la sortie ``exiftool -g -j`` : SourceFile + groupes imbriqués."""
+    record = {"SourceFile": "x.jpg", **groups}
     return json.dumps([record])
 
 
 # ---------------------------------------------------------------------------
-# Lecture via exiftool (runner injecté)
+# Lecture via exiftool -g (runner injecté) — hiérarchie par provenance
 # ---------------------------------------------------------------------------
 
-def test_priority_tags_come_first_and_are_relabelled():
-    runner = lambda args: _exiftool_json(
-        FileName="DSC.JPG", ImageSize="4912x7360", Model="NIKON D800"
+def test_groups_are_nested_by_provenance():
+    runner = lambda args: _exiftool_g_json(
+        File={"FileName": "DSC.JPG"}, EXIF={"Model": "NIKON D800"}
     )
 
     info = exif_info.read_image_info("x.jpg", runner=runner)
 
-    assert info["Fichier"] == "DSC.JPG"
-    assert info["Dimensions"] == "4912x7360"
-    assert info["Appareil"] == "NIKON D800"
-    # les libellés prioritaires connus précèdent les tags bruts
-    assert list(info)[0] == "Fichier"
+    assert info["File"] == {"FileName": "DSC.JPG"}
+    assert info["EXIF"] == {"Model": "NIKON D800"}
 
 
-def test_non_priority_tags_are_kept_verbatim():
-    runner = lambda args: _exiftool_json(FileName="a.jpg", ColorSpace="sRGB")
-
-    info = exif_info.read_image_info("x.jpg", runner=runner)
-
-    assert info["ColorSpace"] == "sRGB"
-
-
-def test_sourcefile_is_dropped():
-    runner = lambda args: _exiftool_json(FileName="a.jpg")
+def test_priority_groups_come_first():
+    # exiftool renvoie ExifTool/JFIF avant File/EXIF ; on doit réordonner.
+    runner = lambda args: _exiftool_g_json(
+        ExifTool={"ExifToolVersion": "12.76"},
+        JFIF={"JFIFVersion": "1.01"},
+        File={"FileName": "a.jpg"},
+        EXIF={"Model": "X"},
+    )
 
     info = exif_info.read_image_info("x.jpg", runner=runner)
 
-    assert "SourceFile" not in info.values()
+    keys = list(info)
+    assert keys[0] == "File"
+    assert keys[1] == "EXIF"
+    assert keys[-1] == "ExifTool"  # accessoire, rejeté en fin
+
+
+def test_sourcefile_is_not_a_group():
+    runner = lambda args: _exiftool_g_json(File={"FileName": "a.jpg"})
+
+    info = exif_info.read_image_info("x.jpg", runner=runner)
+
     assert "SourceFile" not in info
 
 
-def test_runner_receives_json_flag_and_path():
+def test_values_are_stringified():
+    runner = lambda args: _exiftool_g_json(Composite={"Megapixels": 0.002})
+
+    info = exif_info.read_image_info("x.jpg", runner=runner)
+
+    assert info["Composite"]["Megapixels"] == "0.002"
+
+
+def test_runner_receives_group_and_json_flags():
     seen = []
-    runner = lambda args: seen.append(args) or _exiftool_json(FileName="a.jpg")
+    runner = lambda args: seen.append(args) or _exiftool_g_json(File={"FileName": "a.jpg"})
 
     exif_info.read_image_info("/some/photo.jpg", runner=runner)
 
+    assert "-g" in seen[0]
     assert "-j" in seen[0]
     assert "/some/photo.jpg" in seen[0]
 
 
 # ---------------------------------------------------------------------------
-# Repli Pillow (exiftool absent / en échec)
+# Repli Pillow (exiftool absent / en échec) — un seul groupe « Image »
 # ---------------------------------------------------------------------------
 
 def test_falls_back_to_pillow_when_runner_raises(tmp_path):
@@ -74,9 +90,10 @@ def test_falls_back_to_pillow_when_runner_raises(tmp_path):
 
     info = exif_info.read_image_info(img, runner=boom)
 
-    assert info["Fichier"] == "photo.png"
-    assert info["Dimensions"] == "40×30"  # largeur×hauteur
-    assert info["Format"] == "PNG"
+    assert set(info) == {"Image"}
+    assert info["Image"]["Fichier"] == "photo.png"
+    assert info["Image"]["Dimensions"] == "40×30"  # largeur×hauteur
+    assert info["Image"]["Format"] == "PNG"
 
 
 def test_fallback_never_raises_on_unreadable_file(tmp_path):
@@ -87,7 +104,7 @@ def test_fallback_never_raises_on_unreadable_file(tmp_path):
 
     info = exif_info.read_image_info(missing, runner=boom)
 
-    assert info["Fichier"] == "nope.jpg"  # au minimum le nom, sans lever
+    assert info["Image"]["Fichier"] == "nope.jpg"  # au minimum le nom, sans lever
 
 
 def test_malformed_exiftool_output_falls_back(tmp_path):
@@ -97,11 +114,11 @@ def test_malformed_exiftool_output_falls_back(tmp_path):
 
     info = exif_info.read_image_info(img, runner=runner)
 
-    assert info["Fichier"] == "photo.png"  # repli déclenché
+    assert info["Image"]["Fichier"] == "photo.png"  # repli déclenché
 
 
 # ---------------------------------------------------------------------------
-# Résumé de répertoire
+# Résumé de répertoire — même forme hiérarchisée (groupe « Répertoire »)
 # ---------------------------------------------------------------------------
 
 def test_directory_summary_counts_images_only(tmp_path):
@@ -110,9 +127,11 @@ def test_directory_summary_counts_images_only(tmp_path):
 
     summary = exif_info.read_directory_summary(tmp_path)
 
-    assert summary["Images"] == "2"  # a.jpg + b.png, pas les .txt/.md
-    assert summary["Mode"] == "non récursif"
-    assert str(tmp_path) in summary["Répertoire"]
+    assert set(summary) == {"Répertoire"}
+    fields = summary["Répertoire"]
+    assert fields["Images"] == "2"  # a.jpg + b.png, pas les .txt/.md
+    assert fields["Mode"] == "non récursif"
+    assert str(tmp_path) in fields["Chemin"]
 
 
 def test_directory_summary_recursive_descends(tmp_path):
@@ -124,6 +143,6 @@ def test_directory_summary_recursive_descends(tmp_path):
     flat = exif_info.read_directory_summary(tmp_path, recursive=False)
     deep = exif_info.read_directory_summary(tmp_path, recursive=True)
 
-    assert flat["Images"] == "1"
-    assert deep["Images"] == "2"
-    assert deep["Mode"] == "récursif"
+    assert flat["Répertoire"]["Images"] == "1"
+    assert deep["Répertoire"]["Images"] == "2"
+    assert deep["Répertoire"]["Mode"] == "récursif"

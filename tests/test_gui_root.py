@@ -79,27 +79,37 @@ def test_info_dock_is_present(window):
 def test_choosing_a_file_populates_the_info_dock(window, tmp_path):
     reads = []
     # read_fn/summary_fn injectés (comme exiftool_runner) — pas de vrai exiftool.
-    window._info_panel._read_fn = lambda p: reads.append(p) or {"Fichier": Path(p).name}
+    # Forme hiérarchisée : {groupe: {tag: valeur}}.
+    window._info_panel._read_fn = (
+        lambda p: reads.append(p) or {"File": {"FileName": Path(p).name}}
+    )
     img = tmp_path / "photo.jpg"
     img.write_bytes(b"\xff\xd8\xff")
 
     window._set_target(img, is_directory=False)
 
     assert reads == [img]
-    assert window._info_panel._table.rowCount() == 1
+    # un groupe racine « File » déplié, avec un tag enfant
+    tree = window._info_panel._tree
+    assert tree.topLevelItemCount() == 1
+    assert tree.topLevelItem(0).text(0) == "File"
+    assert tree.topLevelItem(0).childCount() == 1
 
 
 def test_choosing_a_directory_shows_the_summary_not_a_file(window, tmp_path):
     summaries = []
     window._info_panel._summary_fn = (
-        lambda p, recursive=False: summaries.append((p, recursive)) or {"Images": "3"}
+        lambda p, recursive=False: summaries.append((p, recursive))
+        or {"Répertoire": {"Images": "3"}}
     )
-    window._info_panel._read_fn = lambda p: {"Fichier": "NE DOIT PAS ÊTRE APPELÉ"}
+    window._info_panel._read_fn = lambda p: {"NE DOIT PAS": {"ÊTRE": "APPELÉ"}}
 
     window._set_target(tmp_path, is_directory=True)
 
     assert summaries == [(tmp_path, False)]
-    assert window._info_panel._table.item(0, 1).text() == "3"
+    tree = window._info_panel._tree
+    assert tree.topLevelItem(0).text(0) == "Répertoire"
+    assert tree.topLevelItem(0).child(0).text(1) == "3"
 
 
 def test_extension_current_image_changed_updates_then_reverts_dock(window, tmp_path, qtbot):
@@ -107,9 +117,11 @@ def test_extension_current_image_changed_updates_then_reverts_dock(window, tmp_p
     from PyQt6.QtCore import pyqtSignal
 
     reads, summaries = [], []
-    window._info_panel._read_fn = lambda p: reads.append(Path(p)) or {"Fichier": Path(p).name}
+    window._info_panel._read_fn = (
+        lambda p: reads.append(Path(p)) or {"File": {"FileName": Path(p).name}}
+    )
     window._info_panel._summary_fn = (
-        lambda p, recursive=False: summaries.append(p) or {"Images": "0"}
+        lambda p, recursive=False: summaries.append(p) or {"Répertoire": {"Images": "0"}}
     )
 
     class _BatchWindow(QMainWindow):
