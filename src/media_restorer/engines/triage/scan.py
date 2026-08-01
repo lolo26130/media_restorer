@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import random
 from collections import Counter
+from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
@@ -30,6 +32,7 @@ from media_restorer.engines.triage.signals import (
     RESOLUTIONS,
     SUPPORTS,
     ImageSignals,
+    TooLarge,
     measure_image,
 )
 
@@ -61,41 +64,77 @@ def iter_images(root: Path | str, *, recursive: bool = True) -> list[Path]:
     )
 
 
+@dataclass(frozen=True)
+class ScanResult:
+    """Signaux mesurés, et ce qui n'a pas été mesuré — avec la raison.
+
+    Distinguer les deux écarts n'est pas cosmétique : une image **écartée par
+    le plafond** est un choix de l'utilisateur, un fichier **illisible** est un
+    incident qu'il voudra peut-être aller regarder.  Les additionner ferait
+    annoncer une perte là où il n'y a qu'un filtre.
+    """
+
+    signals: list[ImageSignals]
+    skipped_large: list[Path]
+    unreadable: list[Path]
+
+    @property
+    def found(self) -> int:
+        """Nombre de fichiers image rencontrés, toutes issues confondues."""
+        return len(self.signals) + len(self.skipped_large) + len(self.unreadable)
+
+
 def scan_directory(
     root: Path | str,
     *,
     recursive: bool = True,
     sample: int | None = None,
     seed: int = 0,
+    max_megapixels: float | None = None,
     measure: Measurer | None = None,
     on_progress: ProgressCallback | None = None,
-) -> list[ImageSignals]:
-    """Mesure les images de *root* et renvoie leurs signaux.
+) -> ScanResult:
+    """Mesure les images de *root* et renvoie un :class:`ScanResult`.
 
     *sample* limite le travail à un tirage aléatoire de cette taille (graine
     *seed*, donc reproductible) — indispensable pour calibrer des seuils sans
     parcourir tout un corpus.  ``None`` mesure tout.
 
-    Les fichiers illisibles sont **ignorés silencieusement** : un corpus
-    numérisé en contient toujours quelques-uns, et un tri qui s'interromprait au
-    premier fichier tronqué serait inutilisable.  Le décompte final permet de
-    repérer une hécatombe (comparer ``len(résultat)`` au nombre attendu).
+    *max_megapixels* écarte les images trop lourdes **sans les décoder** (voir
+    :func:`~media_restorer.engines.triage.signals.measure_image`) ; elles sont
+    listées à part dans le résultat.
+
+    Les fichiers illisibles sont **ignorés sans interrompre le parcours** : un
+    corpus numérisé en contient toujours quelques-uns, et un tri qui
+    s'arrêterait au premier fichier tronqué serait inutilisable.  Ils sont
+    listés eux aussi, pour que l'appelant puisse signaler une hécatombe plutôt
+    que de la passer sous silence.
     """
     paths = iter_images(root, recursive=recursive)
     if sample is not None and sample < len(paths):
         paths = sorted(random.Random(seed).sample(paths, sample))
 
-    measure = measure or measure_image
+    # Le plafond est lié à la vraie mesure, qui seule lit l'en-tête du fichier.
+    # Un substitut injecté (tests) reste une fonction à un seul paramètre : s'il
+    # doit appliquer un plafond, c'est à l'appelant de le lui lier lui-même.
+    if measure is None:
+        measure = partial(measure_image, max_megapixels=max_megapixels)
+
     total = len(paths)
-    results: list[ImageSignals] = []
+    signals: list[ImageSignals] = []
+    skipped_large: list[Path] = []
+    unreadable: list[Path] = []
+
     for index, path in enumerate(paths, start=1):
         try:
-            results.append(measure(path))
+            signals.append(measure(path))
+        except TooLarge:
+            skipped_large.append(path)
         except Exception:
-            pass                                  # fichier illisible : ignoré
+            unreadable.append(path)
         if on_progress is not None:
             on_progress(index, total)
-    return results
+    return ScanResult(signals=signals, skipped_large=skipped_large, unreadable=unreadable)
 
 
 def summarise(signals: Sequence[ImageSignals]) -> dict[str, dict[str, int]]:

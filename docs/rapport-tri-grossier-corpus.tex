@@ -241,9 +241,32 @@ graine identique sur liste triée et non triée ne partageaient que
 from media_restorer.engines.triage import (
     scan_directory, summarise, format_summary)
 
-signals = scan_directory("~/Pictures/Dessins")   # ou sample=500 pour calibrer
-print(format_summary(summarise(signals)))
+r = scan_directory("~/Pictures/Dessins", max_megapixels=50)
+print(format_summary(summarise(r.signals)))
 \end{verbatim}
+
+\subsection{L'extension « Pré-classement »}
+\label{sec:extension}
+
+Le niveau 0 n'est plus un script : c'est une extension de la fenêtre racine.
+
+\begin{itemize}[leftmargin=*,itemsep=3pt]
+  \item \textbf{Choix des critères} — le panneau de paramètres est
+  \textbf{engendré depuis le catalogue} (\texttt{criteria.py}) : une case à
+  cocher par critère, l'ordre des colonnes et des étiquettes restant celui du
+  catalogue quel que soit l'ordre de décochage. Ajouter un critère demain ne
+  touchera aucune ligne de code Qt.
+  \item \textbf{Plafond de résolution} réglable, \textbf{défaut 50\,Mpx} : les
+  images au-delà sont écartées \emph{avant} tout décodage, et comptées à part
+  des fichiers illisibles — un filtre voulu n'est pas un incident.
+  \item \textbf{Classer puis écrire}, en deux actions distinctes : le
+  classement est réversible et ne touche à rien, l'écriture des étiquettes
+  demande \textbf{une seule} confirmation pour tout le lot.
+  \item \textbf{Cohabitation garantie} — le pré-classement écrit sous
+  \texttt{media\_restorer/Tri/}, les repères sous \texttt{media\_restorer/Repère…} ;
+  chacun ne revendique que ses branches, si bien qu'aucun des deux n'efface
+  l'autre (vérifié sur fichiers réels).
+\end{itemize}
 
 % =====================================================================
 \section{Niveau 1 — étiqueteurs du domaine illustration}
@@ -380,6 +403,8 @@ qui sert trois fois.}
 & \textbf{Étape} & \textbf{Ce qu'elle apporte} & \textbf{Coût} \\
 \midrule
 1 & Niveau 0 sur tout le corpus & orientation, encre, papier, résolution & \textbf{9 min CPU} \\
+\addlinespace
+& \multicolumn{3}{l}{\emph{\small Disponible dans l'interface : extension « Pré-classement » (§\ref{sec:extension}).}} \\
 \addlinespace
 2 & Échantillon de 100 images annoté & la référence de validation & une soirée \\
 \addlinespace

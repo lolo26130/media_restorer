@@ -98,11 +98,12 @@ Autres améliorations par rapport à la source
 from __future__ import annotations
 
 import json
-import shutil
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+
+from media_restorer import digikam_tags as _tags
+from media_restorer.digikam_tags import ExiftoolRunner
 
 # Un point : coordonnées en **pourcentage** (0–100) de la largeur (x) et de la
 # hauteur (y) de l'image, ou ``None`` si le repère a été passé.  Les
@@ -110,15 +111,9 @@ from typing import Any, Callable
 # nécessaire si l'image est redimensionnée (c'est tout l'intérêt de ce choix).
 Point = tuple[float, float] | None
 
-# Fonction qui lance ``exiftool`` avec *args* (sans le nom de l'exécutable) et
-# renvoie sa sortie standard.  Injectable pour les tests — voir _default_runner.
-ExiftoolRunner = Callable[[list[str]], str]
-
 # -- Arborescence d'étiquettes ---------------------------------------------
-# Racine commune : c'est elle qui identifie nos données (elle remplace
-# l'ancienne clé de schéma JSON) et qui les regroupe sous une seule branche
-# repliable dans le gestionnaire d'étiquettes de DigiKam.
-_ROOT = "media_restorer"
+# Racine commune à toute l'application (voir :mod:`media_restorer.digikam_tags`).
+_ROOT = _tags.ROOT
 _BRANCH_MARKED = "Repère"
 _BRANCH_SKIPPED = "Repère ignoré"
 _LEAF_COMPLETE = "Repérage complet"
@@ -128,16 +123,8 @@ _LEAF_BY_SOURCE = {"manual": "Repérage manuel", "auto": "Repérage automatique"
 _SOURCE_BY_LEAF = {leaf: source for source, leaf in _LEAF_BY_SOURCE.items()}
 
 # -- Champs porteurs --------------------------------------------------------
-_TAG_HIERARCHICAL = {              # champ exiftool → séparateur de chemin
-    "XMP-digiKam:TagsList": "/",
-    "XMP-lr:HierarchicalSubject": "|",
-    "XMP-microsoft:LastKeywordXMP": "/",
-    "XMP-mediapro:CatalogSets": "|",
-}
-_TAG_FLAT = ("XMP-dc:Subject", "IPTC:Keywords")
-# Déclare l'encodage des champs IPTC (qui ne sont pas UTF-8 par défaut) — nos
-# libellés sont accentués.  DigiKam écrit la même déclaration.
-_TAG_CHARSET = "IPTC:CodedCharacterSet"
+# Les six champs d'étiquettes DigiKam et la syntaxe « structure » d'exiftool
+# sont dans :mod:`media_restorer.digikam_tags`, partagés avec le pré-classement.
 _TAG_REGIONS = "XMP-mwg-rs:RegionInfo"
 # Type MWG de nos régions.  « Focus » (point d'intérêt) plutôt que « Face » :
 # DigiKam n'importe que les régions « Face » dans son arbre « Personnes ».
@@ -148,56 +135,14 @@ _LEGACY_TAG = "UserComment"
 _LEGACY_SCHEMA_KEY = "media_restorer_landmarks"
 
 
-def _default_runner(args: list[str]) -> str:
-    """Lance le vrai binaire ``exiftool`` et renvoie sa sortie standard.
-
-    Runner de production (les tests en injectent un faux).  Lève un
-    :class:`RuntimeError` explicite si ``exiftool`` n'est pas installé, plutôt
-    que le ``FileNotFoundError`` brut de :func:`subprocess.run`.
-    """
-    exe = shutil.which("exiftool")
-    if exe is None:
-        raise RuntimeError(
-            "exiftool introuvable — installez-le (paquet « libimage-exiftool-perl » "
-            "sous Debian/Ubuntu) pour lire/écrire les repères dans les métadonnées."
-        )
-    result = subprocess.run(
-        [exe, *args], capture_output=True, text=True, check=True, timeout=60
-    )
-    return result.stdout
-
-
-# ---------------------------------------------------------------------------
-# Syntaxe « structure » d'exiftool (pour XMP-mwg-rs:RegionInfo)
-# ---------------------------------------------------------------------------
-# exiftool accepte une structure imbriquée sous la forme
-# ``{Clé=valeur,Liste=[{...},{...}]}``.  Le caractère ``|`` y sert d'échappement
-# pour les caractères de structure — indispensable dès qu'un nom de région
-# contient une virgule ou un signe égal.
-
-
-def _escape_struct(value: str) -> str:
-    """Échappe les caractères de structure d'exiftool (``|`` en préfixe)."""
-    out = value.replace("|", "||")
-    for char in "{}[],=":
-        out = out.replace(char, f"|{char}")
-    return out
-
-
-def _to_struct(value: Any) -> str:
-    """Sérialise *value* (dict / list / scalaire) en syntaxe structure exiftool."""
-    if isinstance(value, dict):
-        return "{" + ",".join(f"{k}={_to_struct(v)}" for k, v in value.items()) + "}"
-    if isinstance(value, (list, tuple)):
-        return "[" + ",".join(_to_struct(v) for v in value) + "]"
-    return _escape_struct(str(value))
-
-
-def _as_list(value: Any) -> list:
-    """Normalise une valeur exiftool : un champ à une seule entrée n'est pas une liste."""
-    if value is None:
-        return []
-    return list(value) if isinstance(value, list) else [value]
+# Branches revendiquées par ce module — et **elles seules**.  Revendiquer toute
+# la racine ``media_restorer`` effacerait en silence les étiquettes posées par
+# le pré-classement (:mod:`media_restorer.engines.triage.tags`), et
+# réciproquement : l'écriture reconstruit chaque champ en entier.  Voir
+# l'avertissement en tête de :mod:`media_restorer.digikam_tags`.
+_owns = _tags.branch_owner(
+    _BRANCH_MARKED, _BRANCH_SKIPPED, _LEAF_COMPLETE, *_LEAF_BY_SOURCE.values()
+)
 
 
 @dataclass
@@ -298,14 +243,13 @@ class LandmarkSet:
         injectable pour les tests (défaut : le vrai binaire, voir
         :func:`_default_runner`).
         """
-        runner = runner or _default_runner
+        runner = runner or _tags.default_runner
         existing = _read_raw(path, runner)
-        args = [
-            *_tag_args(existing, self.tag_paths()),
-            *_region_args(existing, self.points),
-            str(path),
-        ]
-        runner(args)
+        _tags.write_tags(
+            path, self.tag_paths(),
+            owns=_owns, runner=runner, raw=existing,
+            extra_args=_region_args(existing, self.points),
+        )
 
     @classmethod
     def read_from_metadata(cls, path: Path | str, *, runner: ExiftoolRunner | None = None) -> "LandmarkSet":
@@ -321,8 +265,8 @@ class LandmarkSet:
         volontairement l'un de l'autre côté appelant : dans les deux cas, il
         n'y a rien à afficher.
         """
-        raw = _read_raw(path, runner or _default_runner)
-        paths = _own_tag_paths(raw)
+        raw = _read_raw(path, runner or _tags.default_runner)
+        paths = _tags.read_tag_paths(raw, _owns)
         if not paths:
             return cls._read_legacy(raw)
 
@@ -358,116 +302,18 @@ class LandmarkSet:
 # ---------------------------------------------------------------------------
 
 def _read_raw(path: Path | str, runner: ExiftoolRunner) -> dict:
-    """Lit en un seul appel tout ce dont l'écriture et la lecture ont besoin.
+    """Lecture unique couvrant étiquettes, régions, dimensions et format hérité.
 
-    ``-struct`` conserve la structure imbriquée de ``RegionInfo`` (indispensable
-    pour réécrire à l'identique les régions étrangères).  Ne lève jamais : un
-    fichier illisible ou sans métadonnées se comporte comme un fichier vide,
-    l'écriture repart alors d'une base vierge.
+    Étend :func:`media_restorer.digikam_tags.read_raw` des champs propres aux
+    repères : les régions MWG (les coordonnées), les dimensions natives
+    (``AppliedToDimensions``, requis par MWG pour interpréter une aire
+    normalisée) et l'ancien ``UserComment`` (repli hérité).  Un seul appel
+    ``exiftool`` sert donc à la fois la lecture et la fusion d'écriture.
     """
-    args = [
-        "-j", "-struct", "-ImageWidth", "-ImageHeight", f"-{_LEGACY_TAG}",
-        *(f"-{tag}" for tag in _TAG_HIERARCHICAL),
-        *(f"-{tag}" for tag in _TAG_FLAT),
-        f"-{_TAG_REGIONS}",
-        str(path),
-    ]
-    try:
-        records = json.loads(runner(args))
-    except Exception:
-        return {}
-    if not isinstance(records, list) or not records or not isinstance(records[0], dict):
-        return {}
-    return records[0]
-
-
-def _split_paths(raw: dict, tag: str, separator: str) -> list[list[str]]:
-    """Chemins d'étiquettes lus dans *tag*, découpés selon son propre séparateur.
-
-    Chaque champ est découpé avec sa propre convention plutôt que déduit de
-    ``TagsList`` : une image étiquetée par Lightroom seul ne porte que
-    ``HierarchicalSubject``, et déduire ses entrées d'un ``TagsList`` absent
-    reviendrait à les effacer.
-    """
-    entries = _as_list(raw.get(tag.split(":")[-1]))
-    return [str(entry).split(separator) for entry in entries]
-
-
-def _own_tag_paths(raw: dict) -> list[list[str]]:
-    """Chemins sous notre racine, lus dans le premier champ qui en porte.
-
-    Ordre de préférence : celui de :data:`_TAG_HIERARCHICAL`, donc ``TagsList``
-    (le champ propre à DigiKam) d'abord.  Un seul champ suffit : les six sont
-    des copies du même jeu.
-    """
-    for tag, separator in _TAG_HIERARCHICAL.items():
-        paths = [
-            parts for parts in _split_paths(raw, tag, separator)
-            if parts and parts[0] == _ROOT
-        ]
-        if paths:
-            return paths
-    return []
-
-
-def _own_leaves(raw: dict) -> set[str]:
-    """Feuilles qui nous appartiennent, **tous** champs hiérarchiques confondus.
-
-    Sert à nettoyer les champs plats (``dc:Subject``, ``IPTC:Keywords``), où
-    rien ne distingue une de nos feuilles d'une étiquette de l'utilisateur.
-    L'union — et non le premier champ qui répond, comme pour la lecture des
-    points — est nécessaire au cas où les six champs seraient désynchronisés :
-    une feuille périmée qu'un seul d'entre eux mentionne encore doit quand même
-    être reconnue comme nôtre, sinon elle survivrait indéfiniment comme
-    « étrangère » et le champ plat accumulerait des repères orphelins.
-    """
-    return {
-        parts[-1]
-        for tag, separator in _TAG_HIERARCHICAL.items()
-        for parts in _split_paths(raw, tag, separator)
-        if parts and parts[0] == _ROOT
-    }
-
-
-def _tag_args(raw: dict, new_paths: list[list[str]]) -> list[str]:
-    """Arguments d'écriture des quatre champs d'étiquettes, fusionnés.
-
-    Chaque champ est réécrit **en entier** (une affectation ``-TAG=`` remplace
-    la liste, elle ne la complète pas), d'où la reconstruction complète :
-    entrées étrangères conservées dans leur ordre, puis les nôtres.
-    """
-    own_leaves = _own_leaves(raw)
-    new_leaves = [parts[-1] for parts in new_paths]
-    args: list[str] = []
-
-    for tag, separator in _TAG_HIERARCHICAL.items():
-        foreign = [
-            separator.join(parts)
-            for parts in _split_paths(raw, tag, separator)
-            if not parts or parts[0] != _ROOT
-        ]
-        args += [f"-{tag}=" + value for value in foreign]
-        args += [f"-{tag}=" + separator.join(parts) for parts in new_paths]
-
-    for tag in _TAG_FLAT:
-        foreign = [
-            str(value) for value in _as_list(raw.get(tag.split(":")[-1]))
-            if str(value) not in own_leaves and str(value) not in new_leaves
-        ]
-        args += [f"-{tag}=" + value for value in [*foreign, *new_leaves]]
-
-    # Aucune entrée du tout : effacer explicitement, sinon l'ancienne liste
-    # resterait en place (une affectation absente ne touche pas au champ).
-    for tag in (*_TAG_HIERARCHICAL, *_TAG_FLAT):
-        if not any(arg.startswith(f"-{tag}=") for arg in args):
-            args.append(f"-{tag}=")
-
-    # IPTC n'est pas UTF-8 par défaut : sans cette déclaration, « Repérage » et
-    # « Repère ignoré » se reliraient en Latin-1 par un logiciel respectant la
-    # norme.  DigiKam écrit exactement la même chose sur les images qu'il
-    # étiquette (vérifié : CodedCharacterSet=UTF8).
-    args.append(f"-{_TAG_CHARSET}=UTF8")
-    return args
+    return _tags.read_raw(
+        path, runner,
+        extra_tags=("ImageWidth", "ImageHeight", _LEGACY_TAG, _TAG_REGIONS),
+    )
 
 
 def _region_args(raw: dict, points: dict[str, Point]) -> list[str]:
@@ -479,7 +325,7 @@ def _region_args(raw: dict, points: dict[str, Point]) -> list[str]:
     info = raw.get("RegionInfo")
     info = info if isinstance(info, dict) else {}
     foreign = [
-        region for region in _as_list(info.get("RegionList"))
+        region for region in _tags.as_list(info.get("RegionList"))
         if isinstance(region, dict) and region.get("Type") != _REGION_TYPE
     ]
     ours = [
@@ -506,7 +352,7 @@ def _region_args(raw: dict, points: dict[str, Point]) -> list[str]:
             "W": raw["ImageWidth"], "H": raw["ImageHeight"], "Unit": "pixel",
         }
     struct["RegionList"] = regions
-    return [f"-{_TAG_REGIONS}=" + _to_struct(struct)]
+    return [f"-{_TAG_REGIONS}=" + _tags.to_struct(struct)]
 
 
 def _region_points(raw: dict) -> dict[str, tuple[float, float]]:
@@ -515,7 +361,7 @@ def _region_points(raw: dict) -> dict[str, tuple[float, float]]:
     if not isinstance(info, dict):
         return {}
     coords: dict[str, tuple[float, float]] = {}
-    for region in _as_list(info.get("RegionList")):
+    for region in _tags.as_list(info.get("RegionList")):
         if not isinstance(region, dict) or region.get("Type") != _REGION_TYPE:
             continue
         area = region.get("Area")

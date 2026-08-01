@@ -25,8 +25,18 @@ Utilisation typique — calibrer des seuils sur un échantillon, puis trier tout
 Seule dépendance : ``Pillow`` et ``numpy``, toutes deux déjà requises par le
 projet.  Aucun téléchargement de poids, aucun GPU.
 """
+from media_restorer.engines.triage.criteria import (
+    CRITERIA,
+    CRITERIA_BY_KEY,
+    METHOD_SIGNALS,
+    METHODS,
+    Criterion,
+    criteria_for,
+    select,
+)
 from media_restorer.engines.triage.scan import (
     IMAGE_SUFFIXES,
+    ScanResult,
     format_summary,
     iter_images,
     scan_directory,
@@ -38,19 +48,29 @@ from media_restorer.engines.triage.signals import (
     RESOLUTIONS,
     SUPPORTS,
     ImageSignals,
+    TooLarge,
     measure_image,
 )
 
 __all__ = [
+    "CRITERIA",
+    "CRITERIA_BY_KEY",
     "IMAGE_SUFFIXES",
     "INK_DENSITIES",
+    "METHODS",
+    "METHOD_SIGNALS",
     "ORIENTATIONS",
     "RESOLUTIONS",
     "SUPPORTS",
+    "Criterion",
     "ImageSignals",
+    "ScanResult",
+    "TooLarge",
+    "criteria_for",
     "format_summary",
     "iter_images",
     "measure_image",
     "scan_directory",
+    "select",
     "summarise",
 ]

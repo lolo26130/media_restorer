@@ -9,6 +9,7 @@ Deux niveaux :
   mesure **injectée**, donc sans décoder la moindre image — c'est le parcours,
   l'échantillonnage et l'agrégation que l'on vérifie là.
 """
+import json
 from pathlib import Path
 
 import numpy as np
@@ -16,17 +17,22 @@ import pytest
 from PIL import Image
 
 from media_restorer.engines.triage import (
+    CRITERIA,
+    CRITERIA_BY_KEY,
     INK_DENSITIES,
     ORIENTATIONS,
     RESOLUTIONS,
     SUPPORTS,
     ImageSignals,
+    TooLarge,
     format_summary,
     iter_images,
     measure_image,
     scan_directory,
     summarise,
 )
+from media_restorer.engines.triage import cache, criteria
+from media_restorer.engines.triage import tags as triage_tags
 
 PAPIER_BLANC = (255, 255, 255)
 PAPIER_JAUNI = (232, 214, 168)      # jauni : écart max-min = 64
@@ -188,10 +194,11 @@ def test_iter_images_non_recursive_stays_at_the_top(tmp_path):
 def test_scan_uses_the_injected_measurer(tmp_path):
     _touch(tmp_path, "a.jpg", "b.jpg")
 
-    signals = scan_directory(tmp_path, measure=_fake_measure)
+    result = scan_directory(tmp_path, measure=_fake_measure)
 
-    assert len(signals) == 2
-    assert all(s.width == 100 for s in signals)  # valeurs du substitut, pas du disque
+    assert len(result.signals) == 2
+    assert all(s.width == 100 for s in result.signals)  # substitut, pas le disque
+    assert result.found == 2 and not result.unreadable
 
 
 def test_sampling_is_reproducible_for_a_given_seed(tmp_path):
@@ -201,14 +208,14 @@ def test_sampling_is_reproducible_for_a_given_seed(tmp_path):
     again = scan_directory(tmp_path, sample=10, seed=7, measure=_fake_measure)
     other = scan_directory(tmp_path, sample=10, seed=8, measure=_fake_measure)
 
-    assert [s.path for s in first] == [s.path for s in again]
-    assert [s.path for s in first] != [s.path for s in other]
+    assert [s.path for s in first.signals] == [s.path for s in again.signals]
+    assert [s.path for s in first.signals] != [s.path for s in other.signals]
 
 
 def test_sample_larger_than_the_corpus_measures_everything(tmp_path):
     _touch(tmp_path, "a.jpg", "b.jpg")
 
-    assert len(scan_directory(tmp_path, sample=99, measure=_fake_measure)) == 2
+    assert len(scan_directory(tmp_path, sample=99, measure=_fake_measure).signals) == 2
 
 
 def test_unreadable_files_are_skipped_not_fatal(tmp_path):
@@ -219,9 +226,12 @@ def test_unreadable_files_are_skipped_not_fatal(tmp_path):
             raise OSError("fichier tronqué")
         return _fake_measure(path)
 
-    signals = scan_directory(tmp_path, measure=measure)
+    result = scan_directory(tmp_path, measure=measure)
 
-    assert [s.path.name for s in signals] == ["ok.jpg"]
+    assert [s.path.name for s in result.signals] == ["ok.jpg"]
+    # L'incident est signalé, pas noyé : l'appelant peut alerter.
+    assert [p.name for p in result.unreadable] == ["casse.jpg"]
+    assert result.found == 2
 
 
 def test_progress_is_reported_for_every_file_including_failures(tmp_path):
@@ -279,3 +289,188 @@ def test_format_summary_shows_share_and_count():
 
     assert "portrait" in text
     assert "100.0 %" in text
+
+
+# ---------------------------------------------------------------------------
+# Plafond de résolution — écarté AVANT tout décodage
+# ---------------------------------------------------------------------------
+
+def test_measure_raises_too_large_before_decoding(tmp_path):
+    """L'en-tête suffit à trancher : aucun pixel n'est décodé pour rien."""
+    img = _draw(tmp_path / "enorme.png", PAPIER_BLANC, ENCRE_NOIRE, size=(3000, 2000))
+
+    with pytest.raises(TooLarge):
+        measure_image(img, max_megapixels=5)          # 6 Mpx > 5
+
+    assert measure_image(img, max_megapixels=10).megapixels == pytest.approx(6.0)
+
+
+def test_scan_lists_oversized_images_apart_from_unreadable_ones(tmp_path):
+    """Un choix de l'utilisateur et un incident ne doivent pas être confondus."""
+    _draw(tmp_path / "petite.png", PAPIER_BLANC, ENCRE_NOIRE, size=(100, 100))
+    _draw(tmp_path / "enorme.png", PAPIER_BLANC, ENCRE_NOIRE, size=(3000, 2000))
+    (tmp_path / "casse.jpg").write_bytes(b"ceci n'est pas une image")
+
+    result = scan_directory(tmp_path, max_megapixels=5)
+
+    assert [s.path.name for s in result.signals] == ["petite.png"]
+    assert [p.name for p in result.skipped_large] == ["enorme.png"]
+    assert [p.name for p in result.unreadable] == ["casse.jpg"]
+    assert result.found == 3
+
+
+def test_no_cap_measures_everything(tmp_path):
+    _draw(tmp_path / "enorme.png", PAPIER_BLANC, ENCRE_NOIRE, size=(3000, 2000))
+
+    result = scan_directory(tmp_path)
+
+    assert len(result.signals) == 1 and not result.skipped_large
+
+
+# ---------------------------------------------------------------------------
+# Catalogue de critères
+# ---------------------------------------------------------------------------
+
+def test_every_class_label_is_usable_as_a_digikam_tag():
+    """« / » est le séparateur de TagsList : un libellé qui en contient casse l'arbre."""
+    assert criteria.check_labels() == []
+
+
+def test_class_labels_are_self_sufficient():
+    """dc:Subject est plat : seule la feuille survit, elle doit se suffire.
+
+    « Moyen » seul ne voudrait rien dire ; « Encre moyenne » si.
+    """
+    densite = CRITERIA_BY_KEY["ink_density"]
+    assert all(label.startswith("Encre") for label in densite.classes)
+
+
+def test_every_criterion_extracts_one_of_its_own_classes():
+    """Aucun critère ne peut produire une valeur absente de ses classes."""
+    echantillons = [
+        ImageSignals(Path("x"), w, h, cov, ink, paper)
+        for w, h in ((100, 200), (200, 100), (100, 100))
+        for cov in (2.0, 25.0, 60.0)
+        for ink in (0.0, 100.0)
+        for paper in (0.0, 100.0)
+    ]
+    for criterion in CRITERIA:
+        produits = {criterion.extract(s) for s in echantillons}
+        assert produits <= set(criterion.classes), criterion.key
+
+
+def test_select_keeps_the_catalogue_order_not_the_caller_order():
+    """Colonnes et étiquettes restent stables quel que soit l'ordre des cases cochées."""
+    choisis = criteria.select(["resolution", "orientation"])
+
+    assert [c.key for c in choisis] == ["orientation", "resolution"]
+
+
+def test_select_ignores_an_unknown_key():
+    """Une configuration persistée peut mentionner un critère retiré depuis."""
+    assert [c.key for c in criteria.select(["orientation", "disparu"])] == ["orientation"]
+
+
+def test_criteria_for_filters_on_method():
+    assert criteria.criteria_for(criteria.METHOD_SIGNALS) == CRITERIA
+    assert criteria.criteria_for("clip") == ()          # crochet, rien encore
+
+
+# ---------------------------------------------------------------------------
+# Étiquettes de tri
+# ---------------------------------------------------------------------------
+
+def test_tag_paths_sit_under_the_triage_branch():
+    s = ImageSignals(Path("x"), 200, 100, 25.0, 0.0, 100.0)   # paysage, jauni
+
+    chemins = triage_tags.tag_paths(s, criteria.select(["orientation", "paper"]))
+
+    assert chemins == [
+        ["media_restorer", "Tri", "Orientation", "Paysage"],
+        ["media_restorer", "Tri", "Papier", "Papier jauni"],
+    ]
+
+
+def test_triage_owns_only_its_own_branch():
+    """Sans cette restriction, écrire un tri effacerait les repères."""
+    assert triage_tags.owns(["media_restorer", "Tri", "Orientation", "Paysage"])
+    assert not triage_tags.owns(["media_restorer", "Repère", "Left Eye"])
+
+
+def test_write_and_read_classification_round_trip(tmp_path):
+    from media_restorer import digikam_tags as T
+
+    store: dict[str, list[str]] = {}
+
+    def runner(args):
+        assignations = [a for a in args if a.startswith("-") and "=" in a]
+        if not assignations:
+            return json.dumps([{"SourceFile": "x.jpg", **store}])
+        nouveau: dict[str, list[str]] = {}
+        for a in assignations:
+            tag, _, valeur = a[1:].partition("=")
+            nouveau.setdefault(tag.split(":")[-1], []).append(valeur)
+        store.update({k: [v for v in vs if v] for k, vs in nouveau.items()})
+        return ""
+
+    s = ImageSignals(Path("x"), 200, 100, 25.0, 0.0, 100.0)
+    triage_tags.write_signals(tmp_path / "p.jpg", s, runner=runner)
+
+    assert triage_tags.read_classification(tmp_path / "p.jpg", runner=runner) == {
+        "Orientation": "Paysage",
+        "Densité d'encre": "Encre moyenne",
+        "Couleur d'encre": "Trait noir",
+        "Papier": "Papier jauni",
+        "Résolution": "< 1 Mpx",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Cache des mesures
+# ---------------------------------------------------------------------------
+
+def test_cache_round_trips_measures(tmp_path):
+    img = _draw(tmp_path / "a.png", PAPIER_BLANC, ENCRE_NOIRE)
+    fichier = tmp_path / "cache.json"
+    mesure = measure_image(img)
+
+    cache.save([mesure], fichier)
+    relu = cache.load(fichier)
+
+    assert relu[img].ink_coverage == pytest.approx(mesure.ink_coverage)
+    assert relu[img].width == mesure.width
+
+
+def test_cache_entry_is_invalidated_when_the_file_changes(tmp_path):
+    img = _draw(tmp_path / "a.png", PAPIER_BLANC, ENCRE_NOIRE)
+    fichier = tmp_path / "cache.json"
+    cache.save([measure_image(img)], fichier)
+
+    # Le fichier est remplacé : taille et mtime changent, l'entrée doit tomber.
+    _draw(img, PAPIER_JAUNI, ENCRE_ROUGE, size=(300, 300))
+
+    assert cache.load(fichier) == {}
+
+
+def test_cache_ignores_a_vanished_file(tmp_path):
+    img = _draw(tmp_path / "a.png", PAPIER_BLANC, ENCRE_NOIRE)
+    fichier = tmp_path / "cache.json"
+    cache.save([measure_image(img)], fichier)
+    img.unlink()
+
+    assert cache.load(fichier) == {}
+
+
+def test_cache_never_raises_on_a_damaged_file(tmp_path):
+    fichier = tmp_path / "cache.json"
+    fichier.write_text("{ pas du json", encoding="utf-8")
+
+    assert cache.load(fichier) == {}          # au pire on remesure, jamais faux
+    assert cache.load(tmp_path / "absent.json") == {}
+
+
+def test_cache_of_another_format_version_is_discarded(tmp_path):
+    fichier = tmp_path / "cache.json"
+    fichier.write_text(json.dumps({"version": 999, "entries": {}}), encoding="utf-8")
+
+    assert cache.load(fichier) == {}

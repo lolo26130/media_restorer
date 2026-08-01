@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1100</width>
+    <height>720</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Pré-classement — tri grossier du corpus</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QVBoxLayout" name="verticalLayout">
+    <item>
+     <widget class="QTableWidget" name="tableResults">
+      <property name="alternatingRowColors">
+       <bool>true</bool>
+      </property>
+      <property name="selectionBehavior">
+       <enum>QAbstractItemView::SelectRows</enum>
+      </property>
+      <property name="sortingEnabled">
+       <bool>true</bool>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QProgressBar" name="progressBar">
+      <property name="value">
+       <number>0</number>
+      </property>
+      <property name="visible">
+       <bool>false</bool>
+      </property>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+  <widget class="QMenuBar" name="menubar">
+   <property name="geometry">
+    <rect>
+     <x>0</x>
+     <y>0</y>
+     <width>1100</width>
+     <height>22</height>
+    </rect>
+   </property>
+   <widget class="QMenu" name="menuClassement">
+    <property name="title">
+     <string>Classement</string>
+    </property>
+    <addaction name="actionClassify"/>
+    <addaction name="actionWriteTags"/>
+    <addaction name="actionExportCsv"/>
+   </widget>
+   <addaction name="menuClassement"/>
+  </widget>
+  <widget class="QStatusBar" name="statusbar"/>
+  <widget class="QToolBar" name="toolBar">
+   <property name="windowTitle">
+    <string>Outils</string>
+   </property>
+   <attribute name="toolBarArea">
+    <enum>TopToolBarArea</enum>
+   </attribute>
+   <attribute name="toolBarBreak">
+    <bool>false</bool>
+   </attribute>
+   <addaction name="actionClassify"/>
+   <addaction name="actionWriteTags"/>
+   <addaction name="actionExportCsv"/>
+  </widget>
+  <action name="actionClassify">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="icon">
+    <iconset resource="../../../resources/icons/media_restorer.qrc">
+     <normaloff>:/icons/media-playback-start.png</normaloff>:/icons/media-playback-start.png
+    </iconset>
+   </property>
+   <property name="text">
+    <string>Classer</string>
+   </property>
+   <property name="toolTip">
+    <string>Mesurer toutes les images de la cible et les classer selon les critères cochés (Ctrl+R)</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+R</string>
+   </property>
+  </action>
+  <action name="actionWriteTags">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="icon">
+    <iconset resource="../../../resources/icons/media_restorer.qrc">
+     <normaloff>:/icons/document-save-2.png</normaloff>:/icons/document-save-2.png
+    </iconset>
+   </property>
+   <property name="text">
+    <string>Écrire les étiquettes</string>
+   </property>
+   <property name="toolTip">
+    <string>Écrire le classement dans les métadonnées de chaque image, au format DigiKam (confirmation demandée) (Ctrl+S)</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+S</string>
+   </property>
+  </action>
+  <action name="actionExportCsv">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="icon">
+    <iconset resource="../../../resources/icons/media_restorer.qrc">
+     <normaloff>:/icons/document-save-as.png</normaloff>:/icons/document-save-as.png
+    </iconset>
+   </property>
+   <property name="text">
+    <string>Exporter en CSV</string>
+   </property>
+   <property name="toolTip">
+    <string>Enregistrer le tableau de classement dans un fichier CSV, sans modifier les images (Ctrl+E)</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+E</string>
+   </property>
+  </action>
+ </widget>
+ <resources>
+  <include location="../../../resources/icons/media_restorer.qrc"/>
+ </resources>
+ <connections/>
+</ui>

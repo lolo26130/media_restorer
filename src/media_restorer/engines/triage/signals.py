@@ -156,13 +156,34 @@ def _classify(value: float, bins: tuple[float, ...], labels: tuple[str, ...]) ->
     return labels[-1]
 
 
-def measure_image(path: Path | str, *, thumbnail_side: int = THUMBNAIL_SIDE) -> ImageSignals:
+class TooLarge(Exception):
+    """L'image dépasse le plafond de résolution demandé.
+
+    Exception distincte d'une erreur de lecture : une image écartée par le
+    plafond est un **choix**, un fichier corrompu est un **incident**.  Les
+    confondre ferait annoncer « 54 fichiers illisibles » là où il n'y en a que
+    trois, voir :class:`~media_restorer.engines.triage.scan.ScanResult`.
+    """
+
+
+def measure_image(
+    path: Path | str,
+    *,
+    thumbnail_side: int = THUMBNAIL_SIDE,
+    max_megapixels: float | None = None,
+) -> ImageSignals:
     """Mesure les signaux gratuits de *path*.
 
     Lève ``OSError`` (ou ``PIL.UnidentifiedImageError``) si le fichier n'est pas
     une image lisible — c'est à l'appelant de décider quoi faire d'un fichier
     corrompu, :func:`~media_restorer.engines.triage.scan.scan_directory` les
     ignore par exemple.
+
+    *max_megapixels* écarte les images trop lourdes en levant :class:`TooLarge`.
+    Le contrôle a lieu **après la lecture de l'en-tête et avant tout décodage**
+    de pixels : ``Image.open()`` ne lit que l'en-tête, si bien qu'une image
+    écartée ne coûte que quelques microsecondes — c'est ce qui rend le plafond
+    gratuit plutôt qu'une simple protection.
 
     Optimisation de lecture : ``Image.draft()`` demande au décodeur JPEG de ne
     produire qu'une version réduite, ce qui évite de décompresser entièrement un
@@ -173,7 +194,9 @@ def measure_image(path: Path | str, *, thumbnail_side: int = THUMBNAIL_SIDE) -> 
     from PIL import Image  # import différé : le cœur ne le paie qu'à l'usage
 
     with Image.open(path) as im:
-        width, height = im.size          # dimensions natives, avant réduction
+        width, height = im.size          # en-tête seul — aucun pixel décodé
+        if max_megapixels is not None and width * height / 1e6 > max_megapixels:
+            raise TooLarge(f"{width}×{height} ({width * height / 1e6:.1f} Mpx)")
         im.draft("RGB", (thumbnail_side, thumbnail_side))
         thumb = im.convert("RGB")
         thumb.thumbnail((thumbnail_side, thumbnail_side))

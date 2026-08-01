@@ -44,6 +44,13 @@ Architecture
                     SON propre TOML (auto_face_id_register.toml) ; la LISTE de
                     repères, elle, vient du landmark_config PARTAGÉ
     - views/main.ui   → .ui, compilé automatiquement
+  - extensions/pre_classement/ → tri grossier d'un corpus puis écriture des
+                    étiquettes DigiKam. ParameterTree ENGENDRÉ depuis CRITERIA ;
+                    _ClassifyWorker et _WriteWorker (QThread, result_ready) ;
+                    classer est RÉVERSIBLE, écrire modifie les fichiers → deux
+                    actions distinctes, UNE seule confirmation pour tout le lot.
+                    Expose current_image_changed (dock « Infos, Exif »).
+                    Plafond Mpx (défaut 50) et critères cochés persistés QSettings
 - image_click.py  → widget PARTAGÉ ImageClick (pg.ImageView) : survol + Entrée/
                     Espace/Q, signaux tagging_finished/point_marked, overlay
                     show_existing_points. Coordonnées émises/stockées en
@@ -78,6 +85,29 @@ Architecture
                     → arbre couvrant minimal = squelette du dessin, sans
                     scikit-image ni networkx), tracing.py (décomposition en
                     traits, Python pur), texture.py, render.py, storage.py (HDF5)
+  - engines/triage/ → cœur du PRÉ-CLASSEMENT, sans Qt, ne dérive PAS de
+                    BaseEngine (image → mesures scalaires, pas image → image ;
+                    donc absent de l'enum Engine, comme vectorise et face_id).
+                    signals.py : ImageSignals — MESURES en attributs, CATÉGORIES
+                    en propriétés recalculées depuis des seuils en constantes de
+                    module (⇒ rejouer un tri avec d'autres seuils ne relit aucun
+                    fichier, seules les mesures sont mises en cache). Deux
+                    saturations SÉPARÉES : encre (20 % + sombres) = axe CONTENU,
+                    papier (40 % + clairs) = axe CONDITION de numérisation ; la
+                    saturation MOYENNE les confondrait et rangerait 36 % du
+                    corpus (trait noir sur papier jauni) en « couleur ».
+                    measure_image(max_megapixels=) lève TooLarge APRÈS lecture
+                    d'en-tête et AVANT décodage → plafond gratuit.
+                    scan.py : ScanResult(signals, skipped_large, unreadable) —
+                    écartée par le plafond ≠ illisible, ne jamais les additionner.
+                    iter_images TRIE (sans quoi un échantillon à graine fixée
+                    n'est pas reproductible : 21 recouvrements sur 500 mesurés).
+                    criteria.py : catalogue DÉCLARATIF (Criterion/CRITERIA) qui
+                    pilote le ParameterTree ET les colonnes ⇒ ajouter un critère
+                    ne touche aucune ligne de Qt. Libellés de classe
+                    AUTO-SUFFISANTS et SANS « / » (séparateur de TagsList).
+                    tags.py : branche media_restorer/Tri/<branche>/<classe>,
+                    owns restreint. cache.py : JSON, invalidation (taille, mtime)
   - engines/face_id/ → cœur de auto_face_id_register, sans Qt, ne dérive PAS de
                     BaseEngine. detect.py : détection ZERO-SHOT (vocabulaire
                     ouvert) pilotée par la liste de repères = requêtes texte
@@ -88,6 +118,26 @@ Architecture
                     detector INJECTABLE → tests sans téléchargement ni inférence
 - imaging.py      → opérations image partagées (ex. lowpass(), utilisé par
                     dual_engine.py ET engines/vectorise/texture.py)
+- digikam_tags.py → moteur PARTAGÉ d'étiquettes hiérarchiques DigiKam, sans Qt
+                    (extrait de landmarks.py). read_raw / read_tag_paths /
+                    tag_args / write_tags / to_struct, runner injectable.
+                    Écrit les 6 champs que DigiKam synchronise (relevés dans
+                    ~/.config/digikamrc, section [DMetadata Settings]
+                    [readTagsNamespaces]) : XMP-digiKam:TagsList (sép. « / »,
+                    source de vérité en lecture), XMP-lr:HierarchicalSubject
+                    (« | »), XMP-microsoft:LastKeywordXMP (« / »),
+                    XMP-mediapro:CatalogSets (« | »), XMP-dc:Subject et
+                    IPTC:Keywords (tagPaths=0 → PLATS, feuille seule),
+                    + IPTC:CodedCharacterSet=UTF8.
+                    ⚠ PIÈGE MAJEUR — APPARTENANCE PAR BRANCHE. exiftool -TAG=
+                    REMPLACE la liste entière : l'écriture est une lecture-
+                    fusion-écriture qui reconstruit chaque champ. Le prédicat
+                    `owns` décide de ce qui est à nous (remplacé) vs étranger
+                    (relu puis réécrit). Un `owns` trop large DÉTRUIT EN SILENCE
+                    les étiquettes d'un autre écrivain. Tout nouvel écrivain
+                    DOIT utiliser branch_owner("SaBranche") et jamais la racine
+                    entière. Verrouillé par test_digikam_tags.py::
+                    test_two_owners_never_erase_each_other
 - landmarks.py    → LandmarkSet : lecture/écriture de points nommés dans les
                     métadonnées via exiftool (sous-processus, runner injectable
                     pour les tests). Cœur sans Qt, partagé par manual_mouse_points
