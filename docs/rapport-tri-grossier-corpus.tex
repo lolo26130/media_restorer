@@ -1,0 +1,436 @@
+% =====================================================================
+%  Tri grossier du corpus : quels critères globaux sont robustes,
+%  et avec quels modèles locaux (media_restorer)
+%
+%  Compilation :  pdflatex rapport-tri-grossier-corpus.tex   (× 3)
+% =====================================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[french]{babel}
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+\usepackage{xurl}             % césure des URL n'importe où
+
+\definecolor{accent}{HTML}{1F4E79}
+\definecolor{encadre}{HTML}{F2F5F8}
+\definecolor{alerte}{HTML}{A33A2E}
+\definecolor{vert}{HTML}{2E6B3E}
+\hypersetup{
+  colorlinks=true, linkcolor=accent, urlcolor=accent, citecolor=accent,
+  pdftitle={Tri grossier du corpus — critères robustes et modèles locaux},
+  pdfsubject={media\_restorer},
+  pdfkeywords={tri, classification, dessins, WD14, CLIP, DigiKam},
+}
+
+\titleformat{\section}{\Large\bfseries\color{accent}}{\thesection}{0.7em}{}
+\titleformat{\subsection}{\large\bfseries}{\thesubsection}{0.6em}{}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{accent}media\_restorer — tri grossier}
+\fancyhead[R]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\newcommand{\aretenir}[1]{%
+  \par\medskip
+  \noindent\colorbox{encadre}{%
+    \begin{minipage}{\dimexpr\linewidth-2\fboxsep}
+      \vspace{2pt}#1\vspace{2pt}
+    \end{minipage}}%
+  \par\medskip
+}
+\newcommand{\alerte}[1]{\textcolor{alerte}{\textbf{#1}}}
+\newcommand{\bon}[1]{\textcolor{vert}{\textbf{#1}}}
+
+% Chemin de module en chasse fixe : sans point de césure, un nom aussi long que
+% media_restorer.engines.triage déborde de 3 cm dans la marge d'un paragraphe
+% justifié. \allowbreak après chaque point suffit — le tiret de césure, lui,
+% serait trompeur dans un identifiant.
+\newcommand{\chemin}[1]{\texttt{#1}}
+\newcommand{\modtriage}{\texttt{media\_restorer.\allowbreak engines.\allowbreak triage}}
+
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+
+% =====================================================================
+\begin{document}
+
+\begin{center}
+  {\LARGE\bfseries\color{accent} Tri grossier du corpus\\[2pt]
+   critères globaux robustes et modèles locaux\par}
+  \vspace{6pt}
+  {\large Rapport préparatoire — projet \texttt{media\_restorer}\par}
+  \vspace{4pt}
+  {\small Corpus : 11\,313 images, 59,6\,Go \textbullet{} mesures
+   \textbf{exhaustives} (11\,310 fichiers, 9\,min\,08\,s de CPU)\par}
+  {\small \today\par}
+\end{center}
+
+\vspace{4pt}\hrule\vspace{10pt}
+\tableofcontents
+\vspace{10pt}\hrule
+
+% =====================================================================
+\section{Le principe : ce qui rend un critère robuste}
+
+Un critère résiste au changement de domaine (photographie $\rightarrow$ dessin,
+puis dessin propre $\rightarrow$ caricature au fusain) quand il repose sur un
+signal \textbf{de grande échelle et géométrique}, plutôt que sur une texture ou
+une convention de rendu.
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{YY}
+\toprule
+\bon{Robuste} — grande échelle, géométrique &
+\alerte{Fragile} — fin, dépendant du style \\
+\midrule
+Nombre de personnages (un / plusieurs / foule) & Identité, nom du personnage \\
+Cadrage (gros plan / buste / pied) & Expression, émotion \\
+Orientation de la page & Âge, sexe \\
+Présence de texte, de bulles & Direction du regard \\
+Une case ou plusieurs (bande dessinée) & Couleur des yeux, des cheveux \\
+Trait noir ou encre colorée & Type de vêtement \\
+Densité d'encre & Pose précise des membres \\
+\bottomrule
+\end{tabularx}
+\caption{La colonne de gauche survit au changement de style parce qu'elle décrit
+la \emph{mise en page}, non le \emph{rendu}.}
+\end{table}
+
+\aretenir{\textbf{Corollaire opérationnel.} Le tri de premier niveau doit se
+limiter à la colonne de gauche. Toute tentative d'y glisser un critère de la
+colonne de droite contaminera le tri entier, car rien ne distinguera ensuite un
+lot mal classé d'un lot bien classé.}
+
+% =====================================================================
+\section{Niveau 0 — les signaux gratuits, sans aucun modèle}
+\label{sec:niveau0}
+
+Avant tout modèle, quatre grandeurs se calculent en lisant l'image à résolution
+réduite. Les chiffres ci-dessous ne sont pas une estimation : ils proviennent
+d'un passage \textbf{exhaustif sur les 11\,310 images} du corpus par le module
+\modtriage{} (§\ref{sec:module}).
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{llrr}
+\toprule
+\textbf{Axe} & \textbf{Classe} & \textbf{Effectif} & \textbf{Part} \\
+\midrule
+Orientation & portrait      & 6\,054 & 53,5\,\% \\
+            & paysage       & 4\,594 & 40,6\,\% \\
+            & carré         & \phantom{0}\phantom{0}662 & \phantom{0}5,9\,\% \\
+\midrule
+Couverture d'encre & très clair ($<5\,\%$) & 1\,370 & 12,1\,\% \\
+                   & clair (5--15\,\%)     & 3\,944 & 34,9\,\% \\
+                   & moyen (15--35\,\%)    & 4\,529 & 40,0\,\% \\
+                   & dense ($>35\,\%$)     & 1\,467 & 13,0\,\% \\
+\midrule
+Résolution & $<1$ Mpx      & 1\,900 & 16,8\,\% \\
+           & 1--6 Mpx      & 4\,453 & 39,4\,\% \\
+           & 6--20 Mpx     & 3\,288 & 29,1\,\% \\
+           & $>20$ Mpx     & 1\,669 & 14,8\,\% \\
+\bottomrule
+\end{tabular}
+\caption{Signaux gratuits, \textbf{corpus entier} (11\,310 images mesurées).
+Aucun intervalle de confiance : ce sont des effectifs, pas des estimations.}
+\end{table}
+
+\aretenir{\textbf{Sur la taille du corpus.} Le module recense
+\textbf{11\,313 fichiers image} là où les décomptes antérieurs en annonçaient
+11\,188 : l'écart tient aux 68 \texttt{.webp} et 60 \texttt{.gif} que les
+premiers relevés ignoraient. \textbf{3 fichiers} se sont révélés illisibles et
+ont été ignorés sans interrompre le parcours — d'où 11\,310 mesures.}
+
+\subsection{Le piège du chromatisme, et sa correction}
+
+Mesurer la saturation \emph{moyenne} d'une image confond deux choses radicalement
+différentes : un dessin réellement colorié, et un dessin au trait noir sur un
+papier jauni par le temps.
+
+La correction tient en une idée : \textbf{mesurer la saturation séparément sur
+les pixels d'encre (les 20\,\% les plus sombres) et sur les pixels de papier
+(les 40\,\% les plus clairs).} Le résultat sépare alors deux axes indépendants :
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{Yrr}
+\toprule
+\textbf{Combinaison encre / papier} & \textbf{Effectif} & \textbf{Part} \\
+\midrule
+Trait noir, papier neutre \quad\emph{(dessin au trait « propre »)}
+  & 3\,405 & 30,1\,\% \\
+\alerte{Trait noir, papier jauni} \quad\emph{(condition de scan, pas contenu)}
+  & 3\,807 & 33,7\,\% \\
+Encre colorée, papier neutre \quad\emph{(vrai dessin en couleur)}
+  & \phantom{0}\phantom{0}535 & \phantom{0}4,7\,\% \\
+Encre colorée, papier jauni
+  & 3\,563 & 31,5\,\% \\
+\bottomrule
+\end{tabularx}
+\caption{Deux axes valent mieux qu'un : une saturation moyenne unique aurait
+rangé les 3\,807 images de la deuxième ligne parmi les dessins « en couleur ».}
+\end{table}
+
+\aretenir{\textbf{Deux enseignements pour le corpus.}
+\textbf{(1)} \textbf{63,8\,\%} des dessins sont au trait noir (7\,212 images) —
+c'est la population homogène sur laquelle un modèle de repères aura le plus de
+chances. \textbf{(2)} \textbf{65,2\,\%} ont un papier jauni (7\,370 images) :
+c'est un axe de \emph{condition} (candidat naturel à un traitement de
+restauration par lot), à ne surtout pas confondre avec un axe de \emph{contenu}.
+Ces deux populations se recouvrent largement mais ne coïncident pas — d'où la
+nécessité des deux axes.}
+
+\subsection{Coût réel}
+
+Le corpus entier a été traité en \textbf{9 minutes 08 secondes}
+(\textbf{48,4\,ms par image}) sur le seul CPU, sans GPU ni téléchargement de
+poids.
+
+\alerte{Correction d'une prévision antérieure.} Une première estimation, tirée
+d'un échantillon de 500 images, annonçait « 20 à 30 minutes » en redoutant la
+queue non-JPEG : \texttt{PIL.draft()} ne réduit le décodage que pour les JPEG,
+or le corpus compte \textbf{25,6\,\% de fichiers non-JPEG} (14,5\,\%
+\texttt{.png}, 9,9\,\% \texttt{.tif}, plus quelques \texttt{.webp} et
+\texttt{.gif}). \textbf{La crainte était infondée} : la mesure exhaustive est
+même \emph{plus rapide} par image que l'échantillon (48,4 contre 53\,ms), les
+PNG et TIFF du corpus étant en moyenne bien plus petits que les gros scans
+JPEG. Le coût reste, dans tous les cas, négligeable.
+
+\subsection{Le module de mesure}
+\label{sec:module}
+
+Ces mesures ne sont pas le produit d'un script jetable : elles sont
+reproductibles via \modtriage{}, sous-paquet du
+c\oe ur sans dépendance Qt (comme \texttt{engines/vectorise} et
+\texttt{engines/face\_id}, il ne dérive pas de \texttt{BaseEngine} — le contrat
+va d'une image vers des mesures scalaires, non d'une image vers une image).
+
+\begin{itemize}[leftmargin=*,itemsep=3pt]
+  \item \texttt{signals.py} — \texttt{ImageSignals} et \texttt{measure\_image()}.
+  Les \emph{mesures} sont des attributs, les \emph{catégories} des propriétés
+  calculées à la volée depuis des seuils exposés en constantes de module :
+  rejouer un tri avec d'autres seuils ne demande pas de relire les fichiers.
+  \item \texttt{scan.py} — \texttt{iter\_images()}, \texttt{scan\_directory()},
+  \texttt{summarise()}, \texttt{format\_summary()}. La fonction de mesure est
+  \textbf{injectable}, ce qui permet de tester parcours, échantillonnage et
+  agrégation sans décoder la moindre image ; le rappel \texttt{on\_progress}
+  laisse une interface graphique afficher une progression sans que le c\oe ur
+  ne connaisse Qt.
+\end{itemize}
+
+\alerte{Un piège de reproductibilité mérite d'être signalé :}
+\texttt{iter\_images()} \textbf{trie} la liste des fichiers. Sans ce tri,
+l'ordre de parcours du système de fichiers rendrait un échantillonnage à graine
+fixée non reproductible — vérifié en pratique, deux tirages de 500 images à
+graine identique sur liste triée et non triée ne partageaient que
+\textbf{21 fichiers sur 500}.
+
+\begin{verbatim}
+from media_restorer.engines.triage import (
+    scan_directory, summarise, format_summary)
+
+signals = scan_directory("~/Pictures/Dessins")   # ou sample=500 pour calibrer
+print(format_summary(summarise(signals)))
+\end{verbatim}
+
+% =====================================================================
+\section{Niveau 1 — étiqueteurs du domaine illustration}
+
+\subsection{Pourquoi ceux-là et pas un modèle photo}
+
+\texttt{WD14} (\emph{WaifuDiffusion Tagger}) et \texttt{JoyTag} sont entraînés
+sur des \textbf{dessins}, selon la taxonomie Danbooru. Le modèle
+\texttt{wd-vit-tagger-v3} a été entraîné sur 7,2 millions d'images et ne pèse que
+\textbf{94,6 millions de paramètres} — largement à la portée d'un CPU.
+
+Surtout : \textbf{la taxonomie Danbooru possède déjà un vocabulaire canonique
+pour exactement les axes recherchés} — nombre de personnages et cadrage sont des
+étiquettes de première classe, pas quelque chose à réinventer.
+
+\subsection{Le vocabulaire, trié par transfert attendu}
+
+Le corpus visé (caricatures de presse, fusains, affiches de 1934, numérisations
+BNF) n'est pas de l'anime. Il faut donc scinder le vocabulaire selon ce qui
+décrit la \emph{géométrie} et ce qui décrit le \emph{style}.
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{YY}
+\toprule
+\bon{Devrait transférer} (géométrie, mise en page) &
+\alerte{Devrait échouer} (style, contenu) \\
+\midrule
+\texttt{solo}, \texttt{multiple\_girls}, \texttt{multiple\_boys}, \texttt{6+girls}
+  & \texttt{1girl} / \texttt{1boy} : l'attribution de sexe sur une caricature \\
+\texttt{full\_body}, \texttt{upper\_body}, \texttt{portrait}, \texttt{close-up}
+  & couleur des cheveux, des yeux \\
+\texttt{from\_side}, \texttt{profile}
+  & vêtements, accessoires \\
+\texttt{monochrome}, \texttt{greyscale}
+  & noms de personnages \\
+\texttt{comic}, \texttt{speech\_bubble}, \texttt{text}
+  & \texttt{rating} (classification de contenu) \\
+\bottomrule
+\end{tabularx}
+\caption{Prédiction falsifiable, non simple mise en garde : la colonne de gauche
+encode des rapports de surfaces et de positions, indépendants du style de tracé.}
+\end{table}
+
+\aretenir{\textbf{La vérification tient en une après-midi :} passer le tagueur sur
+100 images, et \textbf{ne noter que la colonne de gauche}. Si elle tient, le tri
+de niveau 1 est acquis ; si elle échoue, c'est le niveau 2 qui prend le relais.}
+
+\subsection{Sur le score F1 annoncé}
+
+La fiche du modèle indique \textbf{F1 = 0,4402} au seuil 0,2614. Ce chiffre ne
+doit \emph{ni} effrayer \emph{ni} être passé sous silence : c'est une moyenne
+multi-étiquettes calculée sur \textbf{des milliers d'étiquettes, en majorité
+rares}. Les étiquettes structurelles de tête (\texttt{solo}, \texttt{full\_body}
+\dots) — les seules qui nous intéressent — sont bien plus fiables que cette
+moyenne ne le laisse croire, précisément parce qu'elles sont fréquentes et
+massivement représentées à l'entraînement.
+
+\alerte{Dépendance à ajouter :} \texttt{onnxruntime} (absent), le modèle étant
+distribué en ONNX.
+
+% =====================================================================
+\section{Niveau 2 — zero-shot CLIP / SigLIP}
+
+\aretenir{\textbf{Ce niveau est essayable dès ce soir, sans installer quoi que ce
+soit :} \texttt{transformers} 4.57.6 est déjà une dépendance du projet.
+\texttt{onnxruntime}, \texttt{timm}, \texttt{open\_clip} et \texttt{sklearn} sont
+tous absents — le niveau 1 demande donc une installation, pas celui-ci.}
+
+Le zero-shot consiste à comparer l'image à des descriptions textuelles et à
+retenir la plus proche. Il couvre les axes que Danbooru ne nomme pas, et se
+formule directement dans le vocabulaire du corpus :
+
+\begin{itemize}[leftmargin=*,itemsep=3pt]
+  \item \emph{« a portrait drawing of a single face »} contre
+        \emph{« a full-body drawing of a standing person »} contre
+        \emph{« a drawing of a crowd of people »} ;
+  \item \emph{« a political cartoon with speech bubbles »} contre
+        \emph{« a single figure study »} ;
+  \item \emph{« a pencil sketch »} contre \emph{« an ink drawing »} contre
+        \emph{« a printed poster »}.
+\end{itemize}
+
+Deux propriétés en font le complément naturel du niveau 1 : le vocabulaire est
+\textbf{libre} (on écrit les classes que l'on veut, sans réentraîner), et les
+mêmes vecteurs d'image serviront ensuite à la sonde linéaire décrite dans le
+rapport de faisabilité — l'extraction n'est pas à refaire.
+
+% =====================================================================
+\section{Protocole de validation --- la colonne vertébrale}
+\label{sec:validation}
+
+C'est le point central, non une annexe. Trier 11\,188 images sur des critères
+\emph{réputés} robustes sans les avoir mesurés reviendrait à propager une erreur
+inconnue sur tout le corpus.
+
+\begin{enumerate}[leftmargin=*,itemsep=5pt]
+  \item \textbf{Échantillon stratifié de 100 images.} Ne pas tirer au hasard
+  uniformément : piocher dans chaque sous-dossier thématique
+  (\texttt{Cabrol}, \texttt{BNF}, \texttt{Canard}, affiches\dots) pour que les
+  familles minoritaires soient représentées.
+
+  \item \textbf{Annoter chaque axe à la main, une seule fois.} Cadrage, nombre de
+  personnages, présence de texte, trait noir ou couleur. Une centaine d'images,
+  quelques dizaines de minutes.
+
+  \item \textbf{Mesurer l'accord axe par axe} — jamais un score global. Un tri
+  peut être excellent sur le cadrage et inutilisable sur le comptage de
+  personnages : un score moyen masquerait exactement ce qu'il faut savoir.
+
+  \item \textbf{Ne conserver que les axes au-dessus d'un seuil fixé d'avance.}
+  Le choix du seuil appartient à l'utilisateur : 90\,\% pour un tri sur lequel
+  s'appuyer aveuglément, 75\,\% pour un tri simplement destiné à guider une revue
+  manuelle.
+
+  \item \textbf{Écrire le résultat dans les étiquettes DigiKam.} La plomberie
+  existe déjà (\texttt{landmarks.py}, six champs XMP, fusion non destructive) :
+  un tri validé devient immédiatement filtrable dans le gestionnaire
+  d'étiquettes, et réversible.
+\end{enumerate}
+
+\aretenir{\textbf{Ce jeu de 100 images annotées n'est pas jetable.} Il devient le
+jeu de validation permanent : tout modèle ultérieur — sonde linéaire, tagueur
+affiné, détecteur de repères — se mesure contre lui. C'est le même investissement
+qui sert trois fois.}
+
+% =====================================================================
+\section{Ordre de mise en \oe uvre}
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{clYl}
+\toprule
+& \textbf{Étape} & \textbf{Ce qu'elle apporte} & \textbf{Coût} \\
+\midrule
+1 & Niveau 0 sur tout le corpus & orientation, encre, papier, résolution & \textbf{9 min CPU} \\
+\addlinespace
+2 & Échantillon de 100 images annoté & la référence de validation & une soirée \\
+\addlinespace
+3 & Niveau 2 (zero-shot) & cadrage, comptage, type de planche & aucune dépendance \\
+\addlinespace
+4 & Niveau 1 (WD14) & les mêmes axes, vocabulaire canonique & \texttt{onnxruntime} \\
+\addlinespace
+5 & Comparaison 3 \emph{vs} 4 sur l'échantillon & le meilleur des deux, axe par axe & — \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+L'étape 1 est sans risque et sans dépendance : elle peut être lancée
+immédiatement. L'étape 2 conditionne tout le reste. Les étapes 3 et 4 sont
+\textbf{interchangeables dans l'ordre} — commencer par celle qui ne demande
+aucune installation est simplement plus rapide.
+
+\aretenir{\textbf{Lien avec le rapport de faisabilité.} Ce tri grossier n'est pas
+un détour : il produit la population homogène (63,8\,\% de dessins au trait noir,
+soit 7\,212 images, dont le sous-ensemble « portrait » ou « buste ») sur
+laquelle un détecteur de repères a
+le plus de chances de fonctionner. Trier d'abord, c'est aussi choisir les
+150 à 300 images à annoter ensuite.}
+
+% =====================================================================
+\section*{Sources et références}
+\addcontentsline{toc}{section}{Sources et références}
+
+\small\raggedright
+\begin{itemize}[leftmargin=*,itemsep=3pt]
+  \item \texttt{SmilingWolf/wd-vit-tagger-v3} — fiche du modèle (94,6\,M
+  paramètres, 7,2\,M images Danbooru, F1 = 0,4402 au seuil 0,2614, ONNX
+  \texttt{onnxruntime} $\geq$ 1.17) —
+  \url{https://huggingface.co/SmilingWolf/wd-vit-tagger-v3}
+  \item \texttt{JoyTag} — étiqueteur d'illustrations, schéma Danbooru —
+  \url{https://github.com/fpgaminer/joytag}
+  \item \emph{WaifuDiffusion Tagger} — démonstrateur en ligne —
+  \url{https://huggingface.co/spaces/SmilingWolf/wd-tagger}
+  \item \texttt{ComfyUI-WD14-Tagger} — référence d'implémentation et
+  fonctionnement hors ligne —
+  \url{https://github.com/pythongosssss/ComfyUI-WD14-Tagger}
+  \item \emph{LP++: A Surprisingly Strong Linear Probe for Few-Shot CLIP},
+  CVPR 2024 — pour la suite du niveau 2 —
+  \url{https://openaccess.thecvf.com/content/CVPR2024/papers/Huang_LP_A_Surprisingly_Strong_Linear_Probe_for_Few-Shot_CLIP_CVPR_2024_paper.pdf}
+\end{itemize}
+
+\medskip
+\textbf{Mesures.} Les chiffres de la section \ref{sec:niveau0} proviennent d'un
+passage \textbf{exhaustif} du corpus par \modtriage{}
+(§\ref{sec:module}), avec \texttt{Pillow} et \texttt{numpy} seuls :
+11\,310 images mesurées sur 11\,313 trouvées, en 547,8\,s. Reproductible à
+l'identique — le module est couvert par \texttt{tests/test\_triage.py}.
+
+\end{document}
