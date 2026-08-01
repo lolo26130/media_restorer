@@ -92,10 +92,48 @@ Architecture
                     métadonnées via exiftool (sous-processus, runner injectable
                     pour les tests). Cœur sans Qt, partagé par manual_mouse_points
                     ET auto_face_id_register. Duplique+recentre la gestion EXIF de
-                    DataImages (TraiteImages). Tag UserComment, JSON sous la
-                    clé « media_restorer_landmarks » ; exiftool garde <img>_original.
+                    DataImages (TraiteImages) ; exiftool garde <img>_original.
                     Points en POURCENTAGE (0–100, float) → indépendants de la
-                    résolution, aucune conversion lors d'un changement de résolution
+                    résolution, aucune conversion lors d'un changement de résolution.
+                    STOCKAGE COMPATIBLE DIGIKAM (remplace l'ancien UserComment JSON,
+                    encore RELU en repli pour les images antérieures) :
+                    • ce qui est filtrable → étiquettes hiérarchiques écrites dans
+                      les 6 champs que DigiKam synchronise (liste et séparateurs
+                      RELEVÉS dans ~/.config/digikamrc, section [DMetadata Settings]
+                      [readTagsNamespaces] : clés « separator » et « tagPaths ») :
+                      XMP-digiKam:TagsList (« / », source de vérité en lecture),
+                      XMP-lr:HierarchicalSubject (« | »),
+                      XMP-microsoft:LastKeywordXMP (« / »),
+                      XMP-mediapro:CatalogSets (« | »),
+                      XMP-dc:Subject et IPTC:Keywords (tagPaths=0 → PLATS, feuille
+                      seule). + IPTC:CodedCharacterSet=UTF8 (IPTC n'est PAS UTF-8
+                      par défaut et nos libellés sont accentués — DigiKam écrit la
+                      même déclaration). 7e champ XMP-acdsee:Categories écrit par
+                      DigiKam en XML imbriqué : volontairement laissé de côté (seul
+                      format non « liste de chemins », aucun champ relu n'en dépend).
+                      Arborescence sous la racine
+                      « media_restorer » (qui remplace l'ancienne clé de schéma) :
+                        media_restorer/Repère/<Libellé>
+                        media_restorer/Repère ignoré/<Libellé>   (point passé, None)
+                        media_restorer/Repérage manuel | automatique  (provenance,
+                          LandmarkSet.source = "manual"/"auto" selon l'extension)
+                        media_restorer/Repérage complet          (aucun point passé)
+                      Feuilles VOLONTAIREMENT auto-suffisantes (« Repérage complet »
+                      d'un seul tenant, pas « Repérage/Complet ») : dc:Subject et
+                      IPTC:Keywords étant plats, seul le dernier segment y survit
+                    • coordonnées → XMP-mwg-rs:RegionInfo (standard MWG lu par
+                      DigiKam), aires déjà normalisées 0–1 (nos % /100). Type=Focus
+                      et NON Face : DigiKam n'importe que les « Face » dans son
+                      arbre Personnes. Les points passés (None) n'ont pas de région
+                      et ne survivent que par leur étiquette « Repère ignoré ».
+                      Étiquette « Repère » SANS région correspondante → le repère
+                      est OMIS à la lecture, jamais rendu « passé » : le rétrograder
+                      graverait l'erreur au prochain enregistrement
+                    • FUSION NON DESTRUCTIVE OBLIGATOIRE : ces champs sont curés par
+                      l'utilisateur et « exiftool -TAG=… » REMPLACE la liste entière.
+                      write_to_metadata fait donc lecture→fusion→écriture : les
+                      étiquettes hors racine media_restorer et les régions de type
+                      ≠ Focus (visages DigiKam) sont relues puis réécrites
 - download_models.py → téléchargement des poids (MODEL_REGISTRY), point
                     d'entrée autonome : python -m media_restorer.download_models
 - resources/icons/ → icônes partagées entre la racine et toutes les extensions

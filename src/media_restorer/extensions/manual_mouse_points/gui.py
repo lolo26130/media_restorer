@@ -301,7 +301,7 @@ class ManualMousePointsGUI(QMainWindow):
     def on_actionSaveToMetadata_triggered(self) -> None:
         """Écrit les repères désignés dans les métadonnées de l'image, après confirmation.
 
-        L'écriture modifie le fichier image lui-même (tag ``UserComment`` via
+        L'écriture modifie le fichier image lui-même (étiquettes DigiKam via
         ``exiftool``, qui conserve une copie ``<image>_original``).  Comme
         c'est une action sur le fichier d'origine, elle demande d'abord
         confirmation à l'utilisateur.
@@ -325,7 +325,7 @@ class ManualMousePointsGUI(QMainWindow):
             self.statusBar().showMessage("Écriture annulée.")
             return
         try:
-            LandmarkSet(points=dict(self._tags)).write_to_metadata(
+            LandmarkSet(points=dict(self._tags), source="manual").write_to_metadata(
                 self._target_path, runner=self._exiftool_runner
             )
         except Exception as exc:  # exiftool absent, fichier verrouillé…
@@ -344,7 +344,7 @@ class ManualMousePointsGUI(QMainWindow):
     def on_actionShowMetadata_triggered(self) -> None:
         """Relit et affiche les repères déjà présents dans les métadonnées de l'image.
 
-        N'écrit rien : lit le tag ``UserComment`` et présente les repères
+        N'écrit rien : lit les étiquettes DigiKam et présente les repères
         trouvés (ou signale qu'il n'y en a aucun à notre schéma).
         """
         self._refresh_metadata_display(announce=True)

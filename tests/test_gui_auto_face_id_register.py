@@ -64,7 +64,18 @@ def _empty_read(args):
 
 
 def _is_write(args):
-    return any(a.startswith("-UserComment=") for a in args)
+    """Vrai si *args* est un appel d'écriture (une affectation « -TAG=… »).
+
+    Indépendant du format de stockage : l'écriture des repères touche plusieurs
+    champs (étiquettes DigiKam + régions MWG), la lecture n'affecte jamais rien.
+    """
+    return any("=" in a for a in args if a.startswith("-"))
+
+
+def _tag_values(args, tag):
+    """Valeurs affectées à *tag* dans une ligne de commande exiftool."""
+    prefix = f"-{tag}="
+    return [a[len(prefix):] for a in args if a.startswith(prefix)]
 
 
 def _make_window(qtbot, target=None, runner=None, detect_fn=_fake_detect, tmp_path=None):
@@ -210,10 +221,15 @@ def test_save_writes_after_confirmation(qtbot, image_file, monkeypatch):
     win.on_actionSaveToMetadata_triggered()
 
     assert len(writes) == 1
-    tag = next(a for a in writes[0] if a.startswith("-UserComment="))
-    payload = json.loads(tag[len("-UserComment="):])["media_restorer_landmarks"]
-    assert payload["Left Eye"] == [10, 20]
-    assert payload["Nose"] == [20, 35]
+    tags = _tag_values(writes[0], "XMP-digiKam:TagsList")
+    assert "media_restorer/Repère/Left Eye" in tags
+    # Provenance « automatique » : c'est ce qui distingue cette extension de
+    # Manual Mouse Points dans le gestionnaire d'étiquettes de DigiKam.
+    assert "media_restorer/Repérage automatique" in tags
+    # Coordonnées dans les régions MWG, normalisées (10 % → 0.1, 35 % → 0.35).
+    regions = _tag_values(writes[0], "XMP-mwg-rs:RegionInfo")[0]
+    assert "Name=Left Eye,Type=Focus,Area={X=0.1,Y=0.2" in regions
+    assert "Name=Nose,Type=Focus,Area={X=0.2,Y=0.35" in regions
 
 
 def test_save_cancelled_writes_nothing(qtbot, image_file, monkeypatch):

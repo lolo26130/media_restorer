@@ -425,8 +425,9 @@ class AutoFaceIdRegisterGUI(QMainWindow):
     def on_actionSaveToMetadata_triggered(self) -> None:
         """Écrit les repères (détectés/corrigés) dans les métadonnées, après confirmation.
 
-        Modifie le fichier image (tag ``UserComment`` via ``exiftool``, copie
-        ``_original`` conservée) : demande donc confirmation d'abord.
+        Modifie le fichier image (étiquettes DigiKam et régions MWG via
+        ``exiftool``, copie ``_original`` conservée) : demande donc
+        confirmation d'abord.
         """
         self._save_to_metadata()
 
@@ -446,7 +447,7 @@ class AutoFaceIdRegisterGUI(QMainWindow):
             self.statusBar().showMessage("Écriture annulée.")
             return
         try:
-            LandmarkSet(points=dict(self._tags)).write_to_metadata(
+            LandmarkSet(points=dict(self._tags), source="auto").write_to_metadata(
                 self._target_path, runner=self._exiftool_runner
             )
         except Exception as exc:

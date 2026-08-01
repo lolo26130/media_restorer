@@ -56,13 +56,24 @@ def image_file(tmp_path):
 
 
 def _empty_read(args):
-    """Réponse d'``exiftool -UserComment -j`` pour une image sans nos repères."""
+    """Réponse d'``exiftool -j`` pour une image sans nos repères."""
     return json.dumps([{"SourceFile": "x.jpg"}])
 
 
 def _is_write(args):
-    """Vrai si *args* est un appel d'écriture (« -UserComment=… »)."""
-    return any(a.startswith("-UserComment=") for a in args)
+    """Vrai si *args* est un appel d'écriture (une affectation « -TAG=… »).
+
+    Critère volontairement indépendant du format de stockage : l'écriture des
+    repères passe par plusieurs champs (étiquettes DigiKam + régions MWG, voir
+    :mod:`media_restorer.landmarks`), la lecture n'affecte jamais rien.
+    """
+    return any("=" in a for a in args if a.startswith("-"))
+
+
+def _tag_values(args, tag):
+    """Valeurs affectées à *tag* dans une ligne de commande exiftool."""
+    prefix = f"-{tag}="
+    return [a[len(prefix):] for a in args if a.startswith(prefix)]
 
 
 def _make_window(qtbot, target=None, runner=None, config_path=None):
@@ -263,10 +274,21 @@ def test_saving_asks_for_confirmation_and_writes_when_accepted(qtbot, image_file
     win.on_actionSaveToMetadata_triggered()
 
     assert len(writes) == 1
-    tag = next(a for a in writes[0] if a.startswith("-UserComment="))
-    payload = json.loads(tag[len("-UserComment="):])["media_restorer_landmarks"]
-    assert payload == {"Left Eye": [10, 20], "Right Eye": [30, 20],
-                       "Nose": None, "Left Ear": None, "Right Ear": None}
+    # Étiquettes DigiKam : repères marqués, repères passés, et la provenance
+    # « manuelle » propre à cette extension.
+    assert _tag_values(writes[0], "XMP-digiKam:TagsList") == [
+        "media_restorer/Repère/Left Eye",
+        "media_restorer/Repère/Right Eye",
+        "media_restorer/Repère ignoré/Nose",
+        "media_restorer/Repère ignoré/Left Ear",
+        "media_restorer/Repère ignoré/Right Ear",
+        "media_restorer/Repérage manuel",
+    ]
+    # Coordonnées : régions MWG normalisées (10 % → 0.1), les repères passés
+    # n'en produisent aucune.
+    regions = _tag_values(writes[0], "XMP-mwg-rs:RegionInfo")[0]
+    assert "Name=Left Eye" in regions and "X=0.1,Y=0.2" in regions
+    assert "Nose" not in regions
 
 
 def test_saving_is_cancelled_when_confirmation_declined(qtbot, image_file, monkeypatch):
