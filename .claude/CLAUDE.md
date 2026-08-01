@@ -13,7 +13,12 @@ Architecture
                     en direct sur l'image en cours pendant un traitement par
                     lot si l'extension expose le signal OPTIONNEL
                     current_image_changed(object) — Path affiche, None revient
-                    au résumé (contrat duck-typé, doc dans extensions/__init__)
+                    au résumé (contrat duck-typé, doc dans extensions/__init__).
+                    Dock « Aperçu » (gui_widgets.ImagePreview) piloté par la MÊME
+                    règle et le MÊME signal : cible fichier → l'image, cible
+                    répertoire → vide (des milliers d'images, aucune à montrer).
+                    Une extension qui émet current_image_changed pilote donc les
+                    DEUX docks sans rien savoir de leur existence
 - views/root.ui   → .ui de la fenêtre racine, compilé automatiquement
 - extensions/     → registre léger (Extension, ExtensionContext, register(),
                     all_extensions()) — chaque extension = sous-paquet isolé
@@ -50,7 +55,15 @@ Architecture
                     classer est RÉVERSIBLE, écrire modifie les fichiers → deux
                     actions distinctes, UNE seule confirmation pour tout le lot.
                     Expose current_image_changed (dock « Infos, Exif »).
-                    Plafond Mpx (défaut 50) et critères cochés persistés QSettings
+                    Plafond Mpx (défaut 50) et critères cochés persistés QSettings.
+                    DOCK « Aperçu » (gui_widgets.ImagePreview) : branché sur
+                    tableResults.itemSelectionChanged — donc AUSSI au CLAVIER
+                    (flèches), pas seulement au clic. Chargement DIFFÉRÉ par un
+                    QTimer (PREVIEW_DEBOUNCE_MS=120) : une flèche maintenue
+                    traverse des dizaines de lignes, seule celle où l'on s'arrête
+                    est chargée. Le chemin complet voyage sur la cellule
+                    (Qt.ItemDataRole.UserRole) car le tableau est TRIABLE :
+                    l'index de ligne ne désigne plus le bon fichier après un tri
 - image_click.py  → widget PARTAGÉ ImageClick (pg.ImageView) : survol + Entrée/
                     Espace/Q, signaux tagging_finished/point_marked, overlay
                     show_existing_points. Coordonnées émises/stockées en
@@ -61,6 +74,17 @@ Architecture
                     retirés. Au cœur (pas dans une extension) → réutilisé par
                     manual_mouse_points ET auto_face_id_register sans qu'elles
                     dépendent l'une de l'autre (comme gui_widgets.ResultWindow)
+- gui_widgets.py  → widgets Qt PARTAGÉS : ResultWindow (fenêtre de résultat),
+                    InfoExifPanel (arbre des métadonnées), et ImagePreview —
+                    pg.ImageView d'aperçu chargé en RÉSOLUTION RÉDUITE via
+                    Image.draft() + thumbnail (max 1600 px) : indispensable pour
+                    parcourir un tableau au clavier. Mesuré sur le corpus réel :
+                    ~55 ms sur un JPEG de 3 Mpx, ~250 ms sur un TIFF de 23 Mpx
+                    (draft() n'accélère QUE le JPEG). Transpose (1,0,2) avant
+                    setImage — pyqtgraph est col-major, NumPy row-major (même
+                    convention que image_click.py). Orientation EXIF appliquée
+                    via image_io.apply_exif_orientation (jamais redupliquée).
+                    Ne lève jamais : un fichier abîmé affiche un message
 - exif_info.py    → lecteur de métadonnées SANS Qt pour le dock « Infos, Exif »
                     (read_image_info / read_directory_summary). Renvoie une
                     hiérarchie {groupe: {tag: valeur}} via exiftool -g -j

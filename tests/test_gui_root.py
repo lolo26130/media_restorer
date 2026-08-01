@@ -378,3 +378,58 @@ def test_close_event_closes_windows_opened_from_the_root(window, tmp_path, qtbot
     window.close()
 
     assert not opened.isVisible()
+
+
+# ---------------------------------------------------------------------------
+# Dock « Aperçu »
+# ---------------------------------------------------------------------------
+
+def _png(path: Path, colour=(200, 180, 150)) -> Path:
+    import numpy as np
+    from PIL import Image
+
+    arr = np.zeros((60, 90, 3), np.uint8)
+    arr[:, :] = colour
+    Image.fromarray(arr).save(path)
+    return path
+
+
+def test_preview_dock_is_present_and_starts_empty(window):
+    win = window
+
+    assert win._preview_dock.windowTitle() == "Aperçu"
+    assert win._preview_panel.current_path is None
+
+
+def test_choosing_a_file_target_shows_it_in_the_preview(window, tmp_path):
+    img = _png(tmp_path / "cible.png")
+    win = window
+
+    win._set_target(img, is_directory=False)
+
+    assert win._preview_panel.current_path == img
+
+
+def test_choosing_a_directory_leaves_the_preview_empty(window, tmp_path):
+    """Un répertoire n'a pas une image à montrer mais des milliers."""
+    img = _png(tmp_path / "cible.png")
+    win = window
+    win._set_target(img, is_directory=False)
+
+    win._set_target(tmp_path, is_directory=True)
+
+    assert win._preview_panel.current_path is None
+
+
+def test_an_extension_image_drives_both_docks_then_reverts(window, tmp_path):
+    """Le signal optionnel pilote métadonnées ET aperçu, sans rien en savoir."""
+    cible = _png(tmp_path / "cible.png")
+    autre = _png(tmp_path / "autre.png", colour=(20, 20, 20))
+    win = window
+    win._set_target(cible, is_directory=False)
+
+    win._on_extension_image(autre)
+    assert win._preview_panel.current_path == autre
+
+    win._on_extension_image(None)                  # fin de lot
+    assert win._preview_panel.current_path == cible

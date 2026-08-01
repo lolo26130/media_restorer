@@ -333,3 +333,133 @@ def test_cancelling_the_save_dialog_writes_no_file(qtbot, tmp_path, monkeypatch)
     win.on_actionExportCsv_triggered()
 
     assert list(tmp_path.glob("*.csv")) == []
+
+
+# ---------------------------------------------------------------------------
+# Dock « Aperçu » — sélection au clavier comprise
+# ---------------------------------------------------------------------------
+
+def _real_image(path: Path, size=(120, 80), colour=(200, 180, 150)) -> Path:
+    """Écrit un vrai PNG : l'aperçu charge réellement le fichier."""
+    import numpy as np
+    from PIL import Image
+
+    arr = np.zeros((size[1], size[0], 3), np.uint8)
+    arr[:, :] = colour
+    Image.fromarray(arr).save(path)
+    return path
+
+
+def _scan_of(*paths):
+    """Substitut de scan renvoyant un signal par chemin réel donné."""
+    def scan(*_args, **_kwargs):
+        return ScanResult(
+            signals=[_signals(str(p)) for p in paths],
+            skipped_large=[], unreadable=[],
+        )
+    return scan
+
+
+def test_preview_dock_exists_and_starts_empty(qtbot, tmp_path):
+    win = _make_window(qtbot, tmp_path)
+
+    assert win._preview_dock.windowTitle() == "Aperçu"
+    assert win._preview.current_path is None
+
+
+def test_selection_is_debounced_not_loaded_immediately(qtbot, tmp_path):
+    """Maintenir une flèche traverse des dizaines de lignes : on ne charge que la dernière."""
+    img = _real_image(tmp_path / "a.png")
+    win = _make_window(qtbot, tmp_path, scan_fn=_scan_of(img))
+    win.on_actionClassify_triggered()
+
+    win._ui.tableResults.selectRow(0)
+
+    assert win._preview_timer.isActive()           # différé…
+    assert win._preview.current_path is None       # …donc rien n'est encore chargé
+    assert win._preview_timer.isSingleShot()
+
+
+def test_selection_change_loads_the_image(qtbot, tmp_path):
+    img = _real_image(tmp_path / "a.png")
+    win = _make_window(qtbot, tmp_path, scan_fn=_scan_of(img))
+    win.on_actionClassify_triggered()
+
+    win._ui.tableResults.selectRow(0)
+    win._show_selected_preview()                   # ce que fera le minuteur
+
+    assert win._preview.current_path == img
+
+
+def test_keyboard_navigation_triggers_the_same_signal(qtbot, tmp_path):
+    """« Sans cliquer » : itemSelectionChanged est émis aussi au clavier."""
+    from PyQt6.QtCore import Qt as QtNS
+    from PyQt6.QtGui import QKeyEvent
+    from PyQt6.QtCore import QEvent
+
+    a = _real_image(tmp_path / "a.png")
+    b = _real_image(tmp_path / "b.png", colour=(50, 50, 50))
+    win = _make_window(qtbot, tmp_path, scan_fn=_scan_of(a, b))
+    win.on_actionClassify_triggered()
+    table = win._ui.tableResults
+    table.selectRow(0)
+    win._show_selected_preview()
+
+    table.setCurrentCell(1, 0)                     # équivaut à la flèche « bas »
+    win._show_selected_preview()
+
+    assert win._preview.current_path == b
+
+
+def test_the_path_travels_with_the_cell_so_sorting_cannot_break_it(qtbot, tmp_path):
+    """Le tableau est triable : l'index de ligne ne désigne plus le bon fichier."""
+    a = _real_image(tmp_path / "zzz.png")
+    b = _real_image(tmp_path / "aaa.png", colour=(50, 50, 50))
+    win = _make_window(qtbot, tmp_path, scan_fn=_scan_of(a, b))
+    win.on_actionClassify_triggered()
+    table = win._ui.tableResults
+
+    table.sortItems(0)                             # « aaa » passe en tête
+    table.selectRow(0)
+    win._show_selected_preview()
+
+    assert win._preview.current_path == b          # et non l'image de rang 0 initial
+
+
+def test_selection_also_updates_the_root_metadata_dock(qtbot, tmp_path):
+    img = _real_image(tmp_path / "a.png")
+    win = _make_window(qtbot, tmp_path, scan_fn=_scan_of(img))
+    win.on_actionClassify_triggered()
+    vus = []
+    win.current_image_changed.connect(vus.append)
+
+    win._ui.tableResults.selectRow(0)
+    win._show_selected_preview()
+
+    assert vus == [img]                            # aperçu et métadonnées cohérents
+
+
+def test_an_unreadable_file_shows_a_message_instead_of_crashing(qtbot, tmp_path):
+    casse = tmp_path / "casse.png"
+    casse.write_bytes(b"ceci n'est pas une image")
+    win = _make_window(qtbot, tmp_path, scan_fn=_scan_of(casse))
+    win.on_actionClassify_triggered()
+
+    win._ui.tableResults.selectRow(0)
+    win._show_selected_preview()
+
+    assert win._preview.current_path is None
+    assert "illisible" in win._preview._message.text()
+
+
+def test_reclassifying_clears_the_stale_preview(qtbot, tmp_path):
+    img = _real_image(tmp_path / "a.png")
+    win = _make_window(qtbot, tmp_path, scan_fn=_scan_of(img))
+    win.on_actionClassify_triggered()
+    win._ui.tableResults.selectRow(0)
+    win._show_selected_preview()
+    assert win._preview.current_path is not None
+
+    win.on_actionClassify_triggered()              # nouvelle campagne
+
+    assert win._preview.current_path is None

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 from pyqtgraph.parametertree import Parameter, ParameterTree
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QDockWidget,
@@ -45,6 +45,7 @@ from media_restorer.engines.triage import (
     summarise,
 )
 from media_restorer.engines.triage import tags as triage_tags
+from media_restorer.gui_widgets import ImagePreview
 from OutilsQt.Utils_Qt import compile_qrc, compile_ui, tooltips_from_code
 
 _UI_SRC = Path(__file__).parent / "views" / "main.ui"
@@ -62,6 +63,11 @@ _KEY_CRITERIA = _SETTINGS_PREFIX + "criteria"
 #: Plafond par défaut : au-delà, une image coûte cher à décoder pour un intérêt
 #: nul dans un tri grossier.  Réglable, et lu depuis QSettings au lancement.
 DEFAULT_MAX_MEGAPIXELS = 50
+
+#: Délai avant de charger l'aperçu, en millisecondes.  Assez court pour
+#: paraître instantané, assez long pour qu'un défilement maintenu ne charge
+#: que l'image sur laquelle on s'arrête.
+PREVIEW_DEBOUNCE_MS = 120
 
 compile_ui(_UI_SRC, _UI_PY)
 compile_qrc(_QRC_SRC, _QRC_PY)
@@ -200,6 +206,9 @@ class PreClassementGUI(QMainWindow):
         self._target: Path | None = None
         self._result: ScanResult | None = None
         self._criteria: tuple[Criterion, ...] = ()
+        # Index par chemin : le tableau est triable, l'ordre des lignes ne
+        # correspond donc plus à celui du résultat.
+        self._signals_by_path: dict[str, ImageSignals] = {}
         self._worker: QThread | None = None
 
         self._ui = Ui_MainWindow()
@@ -211,6 +220,7 @@ class PreClassementGUI(QMainWindow):
         self.actionExportCsv = self._ui.actionExportCsv
 
         self._build_parameters()
+        self._build_preview_dock()
         self._build_summary_dock()
 
         tooltips_from_code(
@@ -270,6 +280,61 @@ class PreClassementGUI(QMainWindow):
         tree = ParameterTree(showHeader=False)
         tree.setParameters(self._param_root)
         self._param_tree = tree
+
+    def _build_preview_dock(self) -> None:
+        """Dock « Aperçu » : l'image de la ligne sélectionnée, en résolution réduite.
+
+        Branché sur ``itemSelectionChanged`` et non sur un clic : ce signal est
+        aussi émis quand la sélection change **au clavier** (flèches, Page haut/
+        bas), ce qui est le mode de parcours naturel d'un tableau de plusieurs
+        milliers de lignes.
+
+        Le chargement est **différé** par un minuteur : maintenir une flèche
+        enfoncée traverse des dizaines de lignes par seconde, et charger chacune
+        d'elles saturerait le fil d'interface pour n'afficher que la dernière.
+        """
+        self._preview = ImagePreview()
+        dock = QDockWidget("Aperçu", self)
+        dock.setAllowedAreas(
+            Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
+        )
+        dock.setWidget(self._preview)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+        self._preview_dock = dock
+
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(PREVIEW_DEBOUNCE_MS)
+        self._preview_timer.timeout.connect(self._show_selected_preview)
+        self._ui.tableResults.itemSelectionChanged.connect(self._preview_timer.start)
+
+    def _selected_signals(self) -> ImageSignals | None:
+        """Signaux de la ligne sélectionnée, ou ``None``.
+
+        Le tableau étant triable, la position d'une ligne ne correspond plus à
+        son rang dans le résultat : le chemin est donc stocké sur la cellule
+        (``Qt.ItemDataRole.UserRole``) plutôt que déduit de l'index.
+        """
+        if self._result is None:
+            return None
+        items = self._ui.tableResults.selectedItems()
+        if not items:
+            return None
+        chemin = self._ui.tableResults.item(items[0].row(), 0).data(
+            Qt.ItemDataRole.UserRole
+        )
+        return self._signals_by_path.get(chemin)
+
+    @pyqtSlot()
+    def _show_selected_preview(self) -> None:
+        """Affiche l'image sélectionnée et en informe le dock « Infos, Exif »."""
+        signals = self._selected_signals()
+        if signals is None:
+            self._preview.clear()
+            return
+        self._preview.show_path(signals.path)
+        # La racine suit la sélection : métadonnées et aperçu restent cohérents.
+        self.current_image_changed.emit(signals.path)
 
     def _build_summary_dock(self) -> None:
         """Dock « Paramètres et synthèse » : réglages en haut, distributions dessous."""
@@ -392,12 +457,18 @@ class PreClassementGUI(QMainWindow):
             ["Fichier", *(c.title for c in self._criteria)]
         )
         table.setRowCount(len(result.signals))
+        self._signals_by_path = {str(s.path): s for s in result.signals}
         for row, signals in enumerate(result.signals):
-            table.setItem(row, 0, QTableWidgetItem(signals.path.name))
+            cellule = QTableWidgetItem(signals.path.name)
+            # Le chemin complet voyage avec la cellule : le nom affiché ne suffit
+            # pas (deux sous-dossiers peuvent contenir le même nom de fichier).
+            cellule.setData(Qt.ItemDataRole.UserRole, str(signals.path))
+            table.setItem(row, 0, cellule)
             for col, criterion in enumerate(self._criteria, start=1):
                 table.setItem(row, col, QTableWidgetItem(criterion.extract(signals)))
         table.resizeColumnsToContents()
         table.setSortingEnabled(True)
+        self._preview.clear()          # nouvelle campagne : l'aperçu est obsolète
 
     # ------------------------------------------------------------------
     # Écriture des étiquettes

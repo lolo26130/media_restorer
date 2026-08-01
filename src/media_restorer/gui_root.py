@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QUrl, pyqtSlot
 
 from media_restorer.app_settings import SKIN_KEY, TOOLTIP_MODE_KEY, app_settings
-from media_restorer.gui_widgets import InfoExifPanel
+from media_restorer.gui_widgets import ImagePreview, InfoExifPanel
 from media_restorer.extensions import Extension, ExtensionContext, all_extensions
 from media_restorer.theme import THEME_SYSTEM, apply_theme
 from OutilsQt.Utils_Qt import compile_ui, compile_qrc, tooltips_from_code
@@ -135,6 +135,20 @@ class ImageTreatmentWindow(QMainWindow):
         self._info_dock.setWidget(self._info_panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._info_dock)
 
+        # ── Dock « Aperçu » ─────────────────────────────────────────────
+        # L'image de la cible, chargée en résolution réduite (voir
+        # media_restorer.gui_widgets.ImagePreview).  Suit exactement la même
+        # règle que le dock « Infos, Exif » : cible fichier → cette image,
+        # cible répertoire → rien à montrer, et pendant un traitement par lot
+        # il suit l'image en cours via ``current_image_changed``.
+        self._preview_panel = ImagePreview()
+        self._preview_dock = QDockWidget("Aperçu", self)
+        self._preview_dock.setAllowedAreas(
+            Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
+        )
+        self._preview_dock.setWidget(self._preview_panel)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._preview_dock)
+
     # ------------------------------------------------------------------
     # Tooltips
     # ------------------------------------------------------------------
@@ -201,19 +215,24 @@ class ImageTreatmentWindow(QMainWindow):
         self._refresh_info_dock()
 
     def _refresh_info_dock(self) -> None:
-        """Réaffiche le dock « Infos, Exif » selon la cible courante.
+        """Réaffiche les docks « Infos, Exif » et « Aperçu » selon la cible courante.
 
-        Image → ses métadonnées ; répertoire → le résumé du dossier (nombre
-        d'images, taille).  C'est aussi l'état vers lequel le dock **revient**
-        à la fin d'un traitement par lot (voir :meth:`_on_extension_image`).
+        Image → ses métadonnées et son aperçu ; répertoire → le résumé du
+        dossier (nombre d'images, taille) et aucun aperçu, puisqu'il n'y a pas
+        une image à montrer mais des milliers.  C'est aussi l'état vers lequel
+        les deux docks **reviennent** à la fin d'un traitement par lot (voir
+        :meth:`_on_extension_image`).
         """
         if self._target is None:
             self._info_panel.clear()
+            self._preview_panel.clear()
         elif self._is_directory:
             recursive = self._ui.comboRecursive.currentIndex() == 1
             self._info_panel.show_directory(self._target, recursive=recursive)
+            self._preview_panel.clear()
         else:
             self._info_panel.show_for_path(self._target)
+            self._preview_panel.show_path(self._target)
 
     # ------------------------------------------------------------------
     # Lancement d'une extension
@@ -249,16 +268,19 @@ class ImageTreatmentWindow(QMainWindow):
             signal.connect(self._on_extension_image)
 
     def _on_extension_image(self, path: Path | None) -> None:
-        """Met à jour le dock sur l'image en cours de traitement d'une extension.
+        """Met à jour les deux docks sur l'image en cours dans une extension.
 
         Reçu du signal optionnel ``current_image_changed`` : un ``Path`` affiche
-        ses métadonnées ; ``None`` (fin de lot) fait revenir le dock au résumé
-        de la cible courante.
+        ses métadonnées **et** son aperçu ; ``None`` (fin de lot) les fait
+        revenir à la cible courante.  Une extension qui expose ce signal — par
+        exemple Pré-classement, sur la ligne sélectionnée dans son tableau —
+        pilote donc les deux docks d'un coup, sans rien savoir de leur existence.
         """
         if path is None:
             self._refresh_info_dock()
         else:
             self._info_panel.show_for_path(path)
+            self._preview_panel.show_path(path)
 
     # ------------------------------------------------------------------
     # Aide

@@ -12,9 +12,11 @@ from typing import Callable
 import cv2
 import numpy as np
 import pyqtgraph as pg
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
+    QLabel,
     QMainWindow,
     QTreeWidget,
     QTreeWidgetItem,
@@ -104,6 +106,111 @@ class ResultWindow(QMainWindow):
         self._view.setImage(
             rgb, autoLevels=False, levels=(0, 255), autoRange=auto_range, scale=scale
         )
+
+
+class ImagePreview(QWidget):
+    """Aperçu d'une image dans un ``pg.ImageView``, chargé en résolution réduite.
+
+    Conçu pour un **dock d'aperçu** que l'on parcourt au clavier : la sélection
+    peut changer plusieurs fois par seconde, il est donc exclu de décoder à
+    pleine résolution.  Le chargement utilise ``Image.draft()`` — le décodeur
+    JPEG ne produit alors que la taille utile — puis réduit à *max_side*.  Un
+    scan de 50 Mpx s'affiche ainsi en quelques dizaines de millisecondes au
+    lieu de plusieurs secondes.
+
+    L'orientation EXIF est appliquée via
+    :func:`~media_restorer.image_io.apply_exif_orientation`, la même fonction
+    que le reste du projet : un portrait pris à l'horizontale s'affiche droit,
+    et la logique d'orientation n'est écrite qu'une fois.
+
+    Ne lève jamais : un fichier illisible affiche un message dans la vue plutôt
+    que d'interrompre le parcours — on navigue souvent dans des corpus qui
+    contiennent quelques fichiers abîmés.
+    """
+
+    #: Côté maximal de l'aperçu.  1600 px suffit largement à un dock, et
+    #: garde le chargement sous la barre des ~50 ms même sur un gros TIFF.
+    PREVIEW_MAX_SIDE = 1600
+
+    def __init__(self, *, max_side: int = PREVIEW_MAX_SIDE) -> None:
+        super().__init__()
+        self._max_side = max_side
+        self._current: Path | None = None
+
+        self._view = pg.ImageView()
+        self._view.ui.roiBtn.hide()
+        self._view.ui.menuBtn.hide()
+        self._view.ui.histogram.hide()      # inutile pour un simple aperçu
+
+        self._message = QLabel("")
+        self._message.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._message.setWordWrap(True)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._view)
+        layout.addWidget(self._message)
+        self._set_message("Aucune image sélectionnée.")
+
+    @property
+    def current_path(self) -> Path | None:
+        """Image actuellement affichée, ou ``None``."""
+        return self._current
+
+    def show_path(self, path: Path | str) -> bool:
+        """Affiche *path* en aperçu.  Renvoie ``False`` si la lecture a échoué.
+
+        Recharger la même image est un no-op : parcourir la liste avec les
+        flèches redéclenche la sélection sans que le fichier change, et
+        recadrer la vue à chaque fois donnerait un clignotement inutile.
+        """
+        path = Path(path)
+        if path == self._current:
+            return True
+        rgb = self._load(path)
+        if rgb is None:
+            self._current = None
+            self._view.clear()
+            self._set_message(f"« {path.name} » : image illisible.")
+            return False
+        # Transposition (x, y) : pyqtgraph est col-major, NumPy row-major —
+        # même convention que media_restorer.image_click.
+        self._view.setImage(
+            np.transpose(rgb, (1, 0, 2)), autoLevels=False, levels=(0, 255),
+            autoRange=True,
+        )
+        self._current = path
+        self._set_message("")
+        return True
+
+    def clear(self) -> None:
+        """Vide l'aperçu (plus aucune sélection)."""
+        self._current = None
+        self._view.clear()
+        self._set_message("Aucune image sélectionnée.")
+
+    def _set_message(self, text: str) -> None:
+        self._message.setText(text)
+        self._message.setVisible(bool(text))
+
+    def _load(self, path: Path) -> np.ndarray | None:
+        """Charge *path* réduit et redressé, ou ``None`` s'il est illisible."""
+        from PIL import Image
+
+        from media_restorer.image_io import apply_exif_orientation, exif_orientation
+
+        try:
+            with Image.open(path) as im:
+                im.draft("RGB", (self._max_side, self._max_side))
+                thumb = im.convert("RGB")
+                thumb.thumbnail((self._max_side, self._max_side))
+                rgb = np.asarray(thumb, dtype=np.uint8)
+        except Exception:
+            return None
+        try:
+            return apply_exif_orientation(rgb, exif_orientation(path))
+        except Exception:
+            return rgb           # orientation illisible : l'image reste utile
 
 
 class InfoExifPanel(QWidget):
