@@ -1,0 +1,396 @@
+% =====================================================================
+%  Rapport de faisabilité — repérage et description automatiques
+%  de dessins (media_restorer)
+%
+%  Compilation :  pdflatex rapport-reperage-automatique-dessins.tex
+%                 (deux passes pour la table des matières et les liens)
+% =====================================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[french]{babel}
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+
+% ---- Couleurs et liens -----------------------------------------------
+\definecolor{accent}{HTML}{1F4E79}
+\definecolor{encadre}{HTML}{F2F5F8}
+\definecolor{alerte}{HTML}{A33A2E}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=accent,
+  urlcolor=accent,
+  citecolor=accent,
+  pdftitle={Repérage et description automatiques de dessins — rapport de faisabilité},
+  pdfsubject={media\_restorer},
+  pdfkeywords={repères faciaux, caricature, fine-tuning, DigiKam, ROCm},
+}
+
+\titleformat{\section}{\Large\bfseries\color{accent}}{\thesection}{0.7em}{}
+\titleformat{\subsection}{\large\bfseries}{\thesubsection}{0.6em}{}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{accent}media\_restorer — faisabilité}
+\fancyhead[R]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ---- Encadré « à retenir » -------------------------------------------
+\newcommand{\aretenir}[1]{%
+  \par\medskip
+  \noindent\colorbox{encadre}{%
+    \begin{minipage}{\dimexpr\linewidth-2\fboxsep}
+      \vspace{2pt}#1\vspace{2pt}
+    \end{minipage}}%
+  \par\medskip
+}
+\newcommand{\alerte}[1]{\textcolor{alerte}{\textbf{#1}}}
+
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+
+% =====================================================================
+\begin{document}
+
+\begin{center}
+  {\LARGE\bfseries\color{accent} Repérage et description automatiques\\[2pt]
+   de dessins non photographiques\par}
+  \vspace{6pt}
+  {\large Rapport de faisabilité — projet \texttt{media\_restorer}\par}
+  \vspace{4pt}
+  {\small Corpus : 11\,188 dessins \textbullet{} Ryzen 7 8845HS / Radeon 780M (gfx1103) / 92\,Go\par}
+  \vspace{2pt}
+  {\small \today\par}
+\end{center}
+
+\vspace{4pt}
+\hrule
+\vspace{10pt}
+
+\tableofcontents
+\vspace{10pt}
+\hrule
+
+% =====================================================================
+\section{Cadrage : les trois faits qui commandent tout le reste}
+
+\aretenir{%
+\textbf{1. Le budget déterminant est le débit, pas la précision.}
+11\,188 dessins : à 1\,s/image $\rightarrow$ 3\,h ; à 10\,s $\rightarrow$ 31\,h ;
+à 60\,s $\rightarrow$ 7,7 jours. La mesure OWLv2 déjà réalisée sur ce corpus
+($>9$\,min sur une image de 36\,Mpx, d'où le \texttt{max\_side=1536} et le
+repli CPU) est \emph{la} référence à battre. Une méthode plus juste mais aussi
+lente n'est pas une voie exploitable.
+
+\medskip
+\textbf{2. « Repérage » est en réalité deux problèmes empilés.}
+Les détecteurs entraînés sur photographies échouent à la \emph{détection du
+visage} ; la régression de repères n'est donc même jamais tentée. C'est là
+toute la valeur de l'approche zero-shot actuelle, qui contourne l'étape de
+détection.
+
+\medskip
+\textbf{3. Description et repérage sont deux moitiés indépendantes,}
+aux coûts d'entrée sans commune mesure. Les étiquettes DigiKam désormais
+écrites par \texttt{media\_restorer} alimentent la description à coût quasi nul,
+sans toucher aux repères.}
+
+% =====================================================================
+\section{Verdict matériel : le 780M ne peut pas entraîner}
+
+C'est le fait le plus structurant du rapport, et il explique rétroactivement les
+blocages déjà rencontrés (gels au chargement de modèle sur GPU).
+
+MIOpen, la bibliothèque de convolutions de ROCm, \textbf{ne livre pas de base de
+noyaux précompilés pour gfx1103}. Le \emph{runtime} PyTorch prend bien la puce en
+charge, mais les opérations de convolution échouent à l'exécution. Le
+contournement usuel \texttt{HSA\_OVERRIDE\_GFX\_VERSION=11.0.2} provoque quant à
+lui des \textbf{gels système complets} : les différences d'ISA sont trop
+importantes pour que la substitution soit viable.
+
+\aretenir{\textbf{Conséquence pratique.} Tout entraînement se fera soit
+\textbf{sur CPU} (Ryzen 8845HS, 16 threads, 92\,Go — confortable pour des modèles
+de petite taille), soit \textbf{déporté sur Colab}. Cela n'invalide pas le
+projet : les voies les plus rentables (§\ref{sec:voies}, A et B) s'entraînent
+en CPU.}
+
+\textbf{Nuance sur le déport.} Le module \texttt{colab\_calc.py} constitue le bon
+\emph{précédent} architectural pour l'offload GPU, mais c'est un POST FastAPI
+synchrone image par image avec un délai de garde de 180\,s : un harnais
+d'inférence, non d'entraînement. Le chemin d'entraînement reste entièrement à
+construire.
+
+% =====================================================================
+\section{Volume d'annotation nécessaire : ce que dit la littérature}
+
+C'est le point le plus encourageant du dossier. L'adaptation de domaine
+photographie $\rightarrow$ dessin ne réclame \textbf{pas} des milliers d'images
+annotées.
+
+L'étude de référence (\emph{Towards Multi-domain Face Landmark Detection with
+Synthetic Data from Diffusion model}, 2024) affine un réseau \emph{stacked
+Hourglass} avec seulement \textbf{212 images réelles annotées} — 112 issues du
+jeu ArtFace, 100 de CariFace — complétées par environ 772 images synthétiques.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+\textbf{Domaine de test} & \textbf{Méthode adaptée} & \textbf{Référence photo (STAR)} & \textbf{Gain} \\
+\midrule
+ArtFace (artistique)  & NME 4,64 & NME 6,20 & $\approx$ 25\,\% \\
+CariFace (caricature) & NME 5,54 & NME 7,16 & $\approx$ 23\,\% \\
+\bottomrule
+\end{tabular}
+\caption{Erreur normalisée (NME, plus bas = meilleur). Le jeu ArtFace complet ne
+compte que 160 images ; CariFace en compte 6\,240 à l'entraînement.}
+\end{table}
+
+\aretenir{\textbf{Ordre de grandeur retenu : des centaines, pas des milliers.}
+Viser \textbf{150 à 300 dessins annotés} à la main.}
+
+\subsection*{Deux réserves à lever \emph{avant} d'annoter}
+
+\alerte{Ne pas transposer le chiffre de 212 tel quel.} Ces travaux régressent des
+jeux \emph{denses} (68 points et plus) : chaque image y apporte beaucoup de
+supervision. Le jeu actuel de \texttt{media\_restorer} n'en compte que cinq
+(\texttt{Left Eye}, \texttt{Right Eye}, \texttt{Nose}, \texttt{Left Ear},
+\texttt{Right Ear}) — moins de supervision par image, mais une cible bien plus
+facile. Deux décisions en découlent, à prendre avant d'investir dans
+200 annotations :
+
+\begin{enumerate}[leftmargin=*,itemsep=4pt]
+  \item \textbf{Élargir la liste de repères ?} Passer de 5 à une quinzaine de
+  points (coins des yeux, arête et base du nez, coins et centre de la bouche,
+  menton, contour) multiplie la supervision par image sans tripler le temps
+  d'annotation, et stabilise nettement le modèle. La liste est déjà configurable
+  et persistée (\texttt{landmark\_config.py}, TOML partagé entre les deux
+  extensions à repères).
+
+  \item \textbf{Le cas particulier des oreilles.} \texttt{Left Ear} et
+  \texttt{Right Ear} n'existent dans \emph{aucun} jeu de référence (300-W, WFLW,
+  CariFace n'annotent pas les oreilles). Aucun pré-entraînement n'aidera sur ces
+  deux points : ils devront être appris de zéro et demanderont sensiblement plus
+  d'exemples que les autres.
+\end{enumerate}
+
+% =====================================================================
+\section{Expérience n\textsuperscript{o}0 — avant tout codage}
+
+\textbf{Question posée :} les fusains et caricatures du corpus sont-ils plus
+proches du domaine « anime / illustration » ou du domaine « peinture et
+gravure » ? Toute la suite en dépend, et deux familles de modèles pré-entraînés
+déjà publiés y répondent empiriquement.
+
+Prendre \textbf{50 dessins représentatifs} et faire tourner :
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabularx}{\textwidth}{lYY}
+\toprule
+\textbf{Candidat} & \textbf{Domaine d'entraînement} & \textbf{Sortie} \\
+\midrule
+\texttt{yolov8\_animeface}      & anime / manga (mAP50 = 0,955) & boîtes de visage \\
+\texttt{hysts/anime-face-detector} & anime & boîtes \textbf{+ 28 repères} (HRNetV2) \\
+\texttt{ArtFacePoints}          & peintures et gravures haute résolution & repères internes, code publié \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Il suffit de \textbf{compter le taux de détection}. Trois issues, trois
+stratégies :
+
+\begin{itemize}[leftmargin=*,itemsep=4pt]
+  \item \textbf{Un domaine domine ($>60\,\%$)} $\rightarrow$ un point de départ
+  pré-entraîné existe ; l'affinage devient un simple ajustement. C'est le
+  scénario à 150 annotations.
+  \item \textbf{Les deux sont médiocres (20 à 50\,\%)} $\rightarrow$ il faut
+  d'abord un détecteur de visage propre au corpus, avant tout travail sur les
+  repères.
+  \item \textbf{Les deux échouent ($<20\,\%$)} $\rightarrow$ le corpus constitue
+  un domaine à part entière : conserver le zero-shot pour la détection et
+  concentrer l'apprentissage sur la seule régression.
+\end{itemize}
+
+\aretenir{C'est l'expérience au meilleur rapport information/effort de tout ce
+rapport : \textbf{aucun code dans l'extension, aucune annotation}, et elle
+réoriente les quatre voies suivantes.}
+
+% =====================================================================
+\section{Les voies, par coût croissant jusqu'au premier signal}
+\label{sec:voies}
+
+\subsection{Voie A — Description à partir des étiquettes DigiKam}
+
+\emph{La moins chère, de loin.} Elle répond à la moitié « description », non au
+repérage, et est indépendante de toutes les autres. Elle exploite directement le
+format de stockage désormais en place.
+
+\textbf{Principe.} Extraire une fois pour toutes un vecteur CLIP/SigLIP par
+dessin (modèle gelé), puis entraîner un \textbf{simple classifieur linéaire} sur
+les étiquettes DigiKam existantes. Les travaux récents (LP++, CVPR 2024) montrent
+que la sonde linéaire est très compétitive dès quelques exemples par classe, et
+que SigLIP dépasse nettement CLIP.
+
+\begin{itemize}[leftmargin=*,itemsep=3pt]
+  \item \textbf{Coût :} extraction des 11\,188 vecteurs en CPU — une nuit, une
+  seule fois ; entraînement du classifieur en \textbf{quelques secondes},
+  réentraînable à volonté.
+  \item \textbf{Boucle vertueuse :} chaque étiquette posée dans DigiKam améliore
+  le modèle au réentraînement suivant. Les six champs XMP écrits par
+  \texttt{landmarks.py} sont déjà le format d'échange.
+  \item \textbf{Signal d'arrêt :} si après une vingtaine d'exemples par classe la
+  précision reste sous $\approx 70\,\%$, la taxonomie d'étiquettes est trop
+  hétérogène — la reprendre avant de toucher au modèle.
+  \item \textbf{À coder :} un moteur \texttt{engines/embeddings/} (sans Qt), un
+  cache des vecteurs (le HDF5 de \texttt{storage.py} fait précédent), une action
+  « proposer des étiquettes ».
+\end{itemize}
+
+\subsection{Voie B — Repères par régression en cascade (dlib ERT)}
+
+\emph{La moins chère des voies « repères ».}
+
+Le \emph{shape predictor} de dlib (arbres de régression en cascade) s'entraîne
+\textbf{en CPU, en quelques minutes}, accepte un \textbf{nombre de points
+arbitraire}, et ne sollicite ni ROCm ni PyTorch. Le modèle de référence à
+68 points est entraîné sur les 3\,837 images du jeu iBUG 300-W ; un jeu de 5 à
+15 points sur un domaine homogène en demande bien moins.
+
+\begin{itemize}[leftmargin=*,itemsep=3pt]
+  \item \alerte{Limite à assumer :} ERT régresse depuis une boîte de visage. Il
+  faut donc le détecteur issu de l'expérience n\textsuperscript{o}0, ou la boîte
+  produite par le zero-shot actuel. Sa robustesse plafonne par ailleurs bien en
+  deçà d'un réseau à cartes de chaleur sur des géométries très déformées — ce qui
+  est précisément le propre de la caricature.
+  \item \textbf{Pourquoi la mener malgré tout :} c'est le seul moyen d'obtenir
+  \textbf{un chiffre de précision réel sur le corpus en une journée}, et de savoir
+  si 150 annotations suffisent, avant d'investir dans la voie C.
+  \item \textbf{Nouvelle dépendance :} \texttt{dlib}, absent du
+  \texttt{pyproject.toml} actuel.
+\end{itemize}
+
+\subsection{Voie C — Affinage d'un réseau à cartes de chaleur}
+
+\emph{La voie « sérieuse ».} Reproduction de l'état de l'art : un réseau
+Hourglass ou HRNet pré-entraîné sur photographies, affiné sur les annotations
+manuelles, éventuellement augmenté de données synthétiques (transfert de style
+artistique et déformations géométriques — la recette exacte d'ArtFacePoints).
+
+\begin{itemize}[leftmargin=*,itemsep=3pt]
+  \item \textbf{Où l'entraîner :} sur Colab. Pas sur le 780M (§2).
+  \item \textbf{Gain attendu :} de l'ordre de 25\,\% d'erreur en moins face à une
+  référence entraînée sur photographies.
+  \item \alerte{Ne la lancer qu'après la voie B,} qui indiquera si le volume
+  d'annotation est suffisant. L'échec le plus coûteux serait d'annoter
+  300 dessins pour découvrir ensuite que le problème venait de la taxonomie ou du
+  détecteur.
+\end{itemize}
+
+\subsection{Voie D — Description en texte libre par modèle vision-langage}
+
+Deux familles à ne pas confondre :
+
+\begin{itemize}[leftmargin=*,itemsep=4pt]
+  \item \textbf{Étiqueteurs du domaine illustration} — \texttt{WD14/wd-tagger} et
+  \texttt{JoyTag} sont entraînés sur des \textbf{dessins} (schéma Danbooru, plus
+  de 5\,000 étiquettes), et non sur des photographies. C'est exactement le domaine
+  visé, et leur sortie est structurée : elle se déverse directement dans les
+  champs DigiKam. Modèles compacts, inférence CPU réaliste sur l'ensemble du
+  corpus.
+  \item \textbf{Modèles vision-langage généralistes} — Qwen2.5-VL 7B,
+  Florence-2, pour de la description en phrases. En quantification 4 bits via
+  \texttt{llama.cpp}, compter \textbf{3 à 8 jetons/s sur un CPU 8 c\oe urs} : hors
+  budget pour un traitement par lot de 11\,188 images, à réserver à un usage
+  \textbf{à la demande, image par image}.
+\end{itemize}
+
+\aretenir{\textbf{Recommandation :} WD14 ou JoyTag pour le traitement en lot, un
+modèle vision-langage pour l'analyse unitaire à la demande.}
+
+% =====================================================================
+\section{Faisabilité globale}
+
+Le projet est \textbf{réalisable}, avec une nuance nette entre ses deux moitiés.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabularx}{\textwidth}{llY}
+\toprule
+ & \textbf{Faisabilité} & \textbf{Chemin critique} \\
+\midrule
+\textbf{Description automatique} & Élevée &
+Voies A + D, exploitables en quelques jours, sans annotation nouvelle \\
+\addlinespace
+\textbf{Repérage automatique} & Moyenne, conditionnée &
+Dépend de l'expérience n\textsuperscript{o}0 et de 150 à 300 annotations ;
+entraînement hors 780M \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Les deux risques réels ne sont pas techniques mais méthodologiques :
+
+\begin{enumerate}[leftmargin=*,itemsep=3pt]
+  \item \textbf{Annoter avant d'avoir arrêté la liste de repères} (les oreilles,
+  le passage éventuel à quinze points).
+  \item \textbf{Annoter avant de savoir si le problème est la détection ou la
+  régression.}
+\end{enumerate}
+
+L'expérience n\textsuperscript{o}0 et la voie B existent précisément pour lever
+ces deux inconnues à faible coût.
+
+\aretenir{\textbf{La base est bonne :} l'outil d'annotation
+(\texttt{manual\_mouse\_points}), le format de stockage interopérable
+(étiquettes DigiKam et régions MWG), le déport Colab et un moteur zero-shot de
+repli sont déjà en place. \textbf{Ce qui manque est un harnais d'export du jeu
+d'entraînement} — probablement la première chose à coder, quelle que soit la voie
+retenue.}
+
+% =====================================================================
+\section*{Sources}
+\addcontentsline{toc}{section}{Sources}
+
+\small
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item \emph{Towards Multi-domain Face Landmark Detection with Synthetic Data
+  from Diffusion model}, arXiv:2401.13191 —
+  \url{https://arxiv.org/html/2401.13191v1}
+  \item \emph{ArtFacePoints: High-resolution Facial Landmark Detection in
+  Paintings and Prints}, arXiv:2210.09204 —
+  \url{https://arxiv.org/abs/2210.09204} ;
+  code : \url{https://github.com/asindel/ArtFacePoints}
+  \item MIOpen — absence de bases de convolution précompilées pour gfx1103
+  (\emph{issue} \#6335) —
+  \url{https://github.com/ROCm/rocm-libraries/issues/6335}
+  \item \emph{Training a custom dlib shape predictor}, PyImageSearch —
+  \url{https://pyimagesearch.com/2019/12/16/training-a-custom-dlib-shape-predictor/}
+  \item \texttt{hysts/anime-face-detector} —
+  \url{https://github.com/hysts/anime-face-detector} ;
+  \texttt{yolov8\_animeface} —
+  \url{https://huggingface.co/Fuyucchi/yolov8_animeface}
+  \item \texttt{JoyTag} — \url{https://github.com/fpgaminer/joytag} ;
+  \emph{WaifuDiffusion Tagger} —
+  \url{https://huggingface.co/spaces/SmilingWolf/wd-tagger}
+  \item \emph{LP++: A Surprisingly Strong Linear Probe for Few-Shot CLIP},
+  CVPR 2024 —
+  \url{https://openaccess.thecvf.com/content/CVPR2024/papers/Huang_LP_A_Surprisingly_Strong_Linear_Probe_for_Few-Shot_CLIP_CVPR_2024_paper.pdf}
+  \item \emph{Facial Landmark Detection for Stylized Characters} (jeu FLSC :
+  2\,674 images, 98 points) —
+  \url{https://openreview.net/pdf/726e10ade7d55470fbc382488cefab81f72756a3.pdf}
+\end{itemize}
+
+\end{document}

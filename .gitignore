@@ -20,3 +20,8 @@ src/media_restorer/resources/icons/media_restorer_rc.py
 # Utiliser: python -m media_restorer.download_models
 models/
 gfpgan/weights/
+docs/*.pdf
+docs/*.log
+docs/*.aux
+docs/*.out
+docs/*.toc

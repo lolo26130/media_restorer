@@ -1,0 +1,35 @@
+Réponse courte : **non, il n'existe pas d'API DigiKam utilisable depuis un programme externe pour gérer les tags.** Voici les quatre voies envisageables et pourquoi aucune ne convient — je réponds de mémoire, sans avoir pu vérifier sur ta machine dans ce message.
+
+`★ Insight ─────────────────────────────────────`
+- DigiKam n'est pas conçu comme une bibliothèque : ses `libdigikamcore` / `libdigikamdatabase` sont des bibliothèques **internes**, sans API publique stable ni en-têtes installés. Il n'y a pas de « SDK DigiKam ».
+- Son architecture d'extension est **inversée** par rapport à ton besoin : on écrit un greffon qui tourne *dans* DigiKam, on n'appelle pas DigiKam depuis une autre application.
+- Le vrai point d'intégration officiel de DigiKam, c'est **le fichier lui-même** — les six champs XMP/IPTC. C'est exactement ce qui vient d'être implémenté.
+`─────────────────────────────────────────────────`
+
+## Les quatre voies
+
+**1. Bibliothèque C++ (`libdigikam*`)** — pas d'API publique, pas de garantie de stabilité entre versions, pas de bindings Python. Il faudrait écrire et maintenir un binding contre des en-têtes privés qui changent à chaque version mineure. Écarté.
+
+**2. Greffon DPlugin** (`DPluginGeneric`, `DPluginBqm`…) — c'est l'API d'extension réelle de DigiKam 7/8, mais en **C++ compilé contre la version exacte** de DigiKam, chargé dans son processus. Cela reviendrait à transformer `media_restorer` en greffon DigiKam, ce qui contredit ton architecture (fenêtre racine PyQt6 + registre d'extensions) et le principe `engines/` sans dépendance Qt lourde du `CLAUDE.md`.
+
+*Réserve honnête* : j'ai vu tout à l'heure un dossier `~/.local/share/digikam/python`. Je ne sais pas à quoi il correspond et je ne peux pas le vérifier ici — si tu veux en avoir le cœur net, ça vaut un coup d'œil, mais je ne crois pas que DigiKam expose un scripting Python.
+
+**3. D-Bus** — DigiKam s'enregistre bien sur le bus de session, mais son interface est minimale (contrôle d'instance, quelques actions), pas un CRUD de tags. Et elle ne répond que si l'application **est lancée**.
+
+**4. Écrire directement dans la base `digikam4.db`** — techniquement faisable (tables `Tags`, `ImageTags`, `TagsTree`), mais c'est la pire option :
+- schéma versionné, non contractuel, qui change entre versions ;
+- aucun verrouillage avec une instance en cours d'exécution — DigiKam garde son état en mémoire et écraserait tes écritures ;
+- **surtout : les tags ne seraient que dans ce catalogue**, pas dans les images. Tu perdrais précisément la portabilité que le changement vient d'apporter.
+- et chez toi le problème est doublé : **.deb et flatpak ont chacun leur base** (`~/.var/app/org.kde.digikam/` pour le flatpak). Laquelle écrire ?
+
+## Pourquoi l'approche actuelle est la bonne
+
+DigiKam stocke ses tags à deux endroits : sa base (son catalogue privé) et, en écriture différée, **les métadonnées du fichier** — les six champs qu'on écrit maintenant. En écrivant ces champs, on parle son format d'échange natif, celui qu'il produit lui-même. Ta config a déjà `Rescan File If Modified=true`, donc il les reprend au rescan ; sinon « Relire les métadonnées depuis le fichier » force la synchro.
+
+C'est aussi ce qui rend les tags lisibles par Lightroom, Windows, MediaPro — et par les deux installations DigiKam à la fois, ce qu'aucune approche base de données ne permettrait.
+
+## La seule amélioration réelle envisageable
+
+Passer du sous-processus `exiftool` à **Exiv2**, la bibliothèque que DigiKam utilise en interne pour les métadonnées, via `pyexiv2` ou `gexiv2` (GObject Introspection). C'est du « natif » au sens propre : plus de `subprocess`, écriture en mémoire, mêmes champs exactement.
+
+Mais c'est un changement de **transport**, pas de **format** — le schéma de nommage ne bougerait pas d'un caractère. Et cela coûterait une dépendance binaire, alors que le `runner` injectable actuel rend les tests indépendants de tout binaire. Mon avis : à garder en réserve, pas à faire maintenant.
