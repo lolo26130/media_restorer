@@ -1,0 +1,594 @@
+% =====================================================================
+%  Détection de dessins doublons non triviaux — bibliographie, mesures
+%  et spécification d'une méthode (media_restorer)
+%
+%  Compilation :  pdflatex rapport-doublons-dessins.tex   (× 3)
+% =====================================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[french]{babel}
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{amsmath}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+\usepackage{xurl}             % césure des URL n'importe où
+
+\definecolor{accent}{HTML}{1F4E79}
+\definecolor{encadre}{HTML}{F2F5F8}
+\definecolor{alerte}{HTML}{A33A2E}
+\definecolor{vert}{HTML}{2E6B3E}
+\hypersetup{
+  colorlinks=true, linkcolor=accent, urlcolor=accent, citecolor=accent,
+  pdftitle={Détection de dessins doublons non triviaux},
+  pdfsubject={media\_restorer},
+  pdfkeywords={doublons, copy detection, homographie, MAGSAC, invariance},
+}
+
+\titleformat{\section}{\Large\bfseries\color{accent}}{\thesection}{0.7em}{}
+\titleformat{\subsection}{\large\bfseries}{\thesubsection}{0.6em}{}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{accent}media\_restorer — doublons}
+\fancyhead[R]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\newcommand{\aretenir}[1]{%
+  \par\medskip
+  \noindent\colorbox{encadre}{%
+    \begin{minipage}{\dimexpr\linewidth-2\fboxsep}
+      \vspace{2pt}#1\vspace{2pt}
+    \end{minipage}}%
+  \par\medskip
+}
+\newcommand{\alerte}[1]{\textcolor{alerte}{\textbf{#1}}}
+\newcommand{\bon}[1]{\textcolor{vert}{\textbf{#1}}}
+
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+% Colonne FIXE en drapeau. Une colonne « l » ne se coupe jamais : y mettre
+% du texte long lui fait absorber toute la largeur du tableau, et les
+% colonnes X restantes débordent dans la marge.
+\newcolumntype{F}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+% =====================================================================
+\begin{document}
+
+\begin{center}
+  {\LARGE\bfseries\color{accent} Détection de dessins doublons\\[2pt]
+   non triviaux\par}
+  \vspace{6pt}
+  {\large Bibliographie, mesures et spécification d'une méthode\par}
+  \vspace{4pt}
+  {\small Projet \texttt{media\_restorer} \textbullet{} corpus
+   \texttt{Dessins/Cabrol} : 8\,693 images\par}
+  {\small Toutes les mesures de ce rapport ont été faites sur ce corpus\par}
+  {\small \today\par}
+\end{center}
+
+\vspace{4pt}\hrule\vspace{10pt}
+\tableofcontents
+\vspace{10pt}\hrule
+
+% =====================================================================
+\section{Le mur combinatoire}
+\label{sec:mur}
+
+Comparer toutes les paires du corpus, c'est \textbf{37\,779\,778 comparaisons}.
+Les coûts ci-dessous ne sont pas des estimations : ils ont été mesurés sur des
+dessins du corpus, en travaillant à 1\,000\,px de côté (voir
+§\ref{sec:mesures}).
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Détecteur} & \textbf{Coût mesuré} & \textbf{Toutes les paires}
+  & \textbf{Top-20 candidats} \\
+\midrule
+ORB   & \phantom{0}18 ms & \alerte{7,9 jours}  & \bon{0,43 h} \\
+AKAZE & \phantom{0}71 ms & \alerte{31,0 jours} & \bon{1,71 h} \\
+SIFT  & 148 ms           & \alerte{64,7 jours} & \bon{3,57 h} \\
+\bottomrule
+\end{tabular}
+\caption{Vérification géométrique exhaustive contre vérification ciblée sur
+20 candidats par image (86\,930 paires). Rapport : \textbf{434×}.}
+\end{table}
+
+\aretenir{\textbf{Une architecture à deux étages n'est pas un raffinement, c'est
+la condition d'existence du projet.} Il faut d'abord \emph{proposer} des
+candidats à bas coût, puis ne \emph{vérifier} géométriquement que ceux-là.}
+
+\subsection{Un résultat contre-intuitif : aucun index approché n'est nécessaire}
+
+L'étage « candidats » se ramène à comparer 8\,693 descripteurs entre eux. Avec
+des vecteurs de 256 dimensions, la matrice de similarité complète représente
+\textbf{19,3 G opérations multiplication-accumulation} et \textbf{302\,Mo} —
+soit \textbf{quelques secondes} avec BLAS sur les 16 c\oe urs de la machine, et
+une empreinte négligeable devant les 92\,Go de RAM disponibles.
+
+\alerte{Aucune bibliothèque d'index approché n'est donc requise.}
+\texttt{faiss}, \texttt{hnswlib} et \texttt{annoy} sont absents de
+l'installation, et le resteraient utilement : ils ne deviennent nécessaires
+qu'au-delà de $10^5$ images environ. À 8\,693, la force brute est à la fois plus
+simple et \emph{exacte}, là où un index approché introduirait des faux négatifs
+sans contrepartie.
+
+% =====================================================================
+\section{Trois régimes, et non un problème unique}
+\label{sec:regimes}
+
+Les quatre situations à détecter ne relèvent pas de la même mécanique. La
+question qui les sépare est simple : \emph{existe-t-il une transformation
+géométrique qui envoie une image sur l'autre ?}
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{llY}
+\toprule
+\textbf{Régime} & \textbf{Situation} & \textbf{Une homographie relie-t-elle les deux images ?} \\
+\midrule
+\textbf{R1} copie géométrique & même original, deux numérisations
+  & \bon{oui}, globale — les deux images se recouvrent entièrement \\
+\addlinespace
+\textbf{R2} inclusion partielle & même dessin sur un autre support ;
+  détail, recadrage
+  & \bon{oui}, mais vers une \textbf{sous-région} : la transformation existe,
+    le recouvrement est partiel \\
+\addlinespace
+\textbf{R3} variante redessinée & le même sujet redessiné par l'artiste
+  & \alerte{non} — aucune transformation ne relie les traits \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\aretenir{\textbf{R1 et R2 se traitent par la même machinerie} — l'inclusion
+partielle n'est pas un cas particulier à ajouter, elle sort naturellement de
+l'estimation (§\ref{sec:dico}). \alerte{R3 en est fondamentalement distinct} :
+aucune méthode géométrique ne peut l'atteindre, et les méthodes qui le peuvent
+sont nettement moins fiables. Présenter une « solution unique » aux quatre cas
+serait malhonnête.}
+
+% =====================================================================
+\section{Les familles de méthodes}
+\label{sec:familles}
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{F{2.5cm}YYF{2.1cm}}
+\toprule
+\textbf{Famille} & \textbf{Invariances} & \textbf{Rôle} & \textbf{Coût} \\
+\midrule
+\textbf{A} — hachage perceptuel
+  (pHash, dHash) & contraste, translation faible
+  & \alerte{pré-filtre quasi-exact seulement} : ni rotation, ni recadrage
+  & négligeable \\
+\addlinespace
+\textbf{B} — Fourier-Mellin log-polaire ; moments de Zernike, de Hu
+  & rotation, homothétie, translation
+  & candidats R1 ; \textbf{estime déjà} angle et échelle
+  & faible \\
+\addlinespace
+\textbf{C} — traits locaux + vérification géométrique
+  (SIFT, AKAZE, ORB + MAGSAC) & affine, partielle, photométrique
+  & \bon{la réponse pour R1 et R2} & 18--148 ms/paire \\
+\addlinespace
+\textbf{D} — descripteurs appris (SSCD, DINOv2, CLIP)
+  & apprises, larges & candidats ; \textbf{seul espoir pour R3} & moyen \\
+\addlinespace
+\textbf{E} — spécifique dessin (squelettisation, descripteurs de traits)
+  & épaisseur de trait & normalisation \emph{en amont} & faible \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{A — hachage perceptuel : à ne pas confondre avec une solution}
+
+Le hachage perceptuel réduit une image à quelques dizaines de bits et compare
+par distance de Hamming. C'est la première idée qui vient, et elle ne répond
+pas à la question posée : \alerte{pHash n'est invariant ni à la rotation ni au
+recadrage.} Il reste utile comme filtre de premier passage pour les doublons
+\emph{quasi} exacts (recompression, changement de format), pas au-delà.
+
+\subsection{B — Fourier-Mellin : la rotation devient une translation}
+
+La méthode de \textsc{Reddy} et \textsc{Chatterji} exploite une propriété
+élégante : dans le domaine de Fourier, une translation ne change que la phase,
+donc le \emph{module} du spectre est invariant par translation. En passant ce
+module en coordonnées log-polaires, une rotation et une homothétie deviennent
+deux \emph{translations} — que l'on retrouve par corrélation de phase.
+
+Intérêt pour l'étage candidats : le descripteur est global (donc rapide), et il
+fournit \textbf{déjà} une estimation de l'angle et du facteur d'échelle.
+\texttt{cv2.warpPolar} est disponible dans l'installation : rien à ajouter.
+Limite : étant \emph{global}, il tolère mal l'inclusion partielle — il sert donc
+R1, pas R2.
+
+\subsection{C — traits locaux et vérification géométrique}
+
+Le schéma classique : détecter des points d'intérêt, les décrire, apparier par
+plus proche voisin avec le test de ratio de \textsc{Lowe}, puis estimer une
+homographie robuste qui rejette les appariements aberrants. Le nombre
+d'appariements survivants — les \emph{inliers} — est la mesure de similarité.
+
+\bon{C'est cette famille qui répond à R1 et R2}, et l'inclusion partielle y est
+native : rien n'oblige les points appariés à couvrir toute l'image.
+
+Deux choix modernes importent. Le premier est l'estimateur robuste :
+\textbf{MAGSAC++} (\texttt{cv2.\allowbreak USAC\_\allowbreak MAGSAC}, présent dans OpenCV 4.13) évite le
+réglage délicat du seuil d'inlier de RANSAC. Le second est le détecteur, que la
+§\ref{sec:mesures} tranche par la mesure plutôt que par réputation.
+
+\subsection{D — descripteurs appris}
+
+L'état de l'art de la détection de copie est aujourd'hui \textbf{SSCD}
+(CVPR 2022), entraîné par apprentissage auto-supervisé contrastif et évalué sur
+le jeu \textbf{DISC21} du \emph{Image Similarity Challenge} de Meta — c'est-à-dire
+exactement notre problème : retrouver une image transformée parmi un million de
+distracteurs. SSCD y dépasse les descripteurs auto-supervisés généralistes de
+très loin (jusqu'à +48 points absolus sur SimCLR).
+
+Pour les variantes redessinées (R3), la littérature récente sur la recherche
+d'\oe uvres d'art situe \textbf{DINOv2} devant CLIP en similarité fine d'images
+— CLIP restant préférable si l'on veut interroger par texte. \texttt{transformers}
+étant déjà une dépendance du projet, CLIP est utilisable \emph{ce soir} ;
+DINOv2 et SSCD demanderaient un téléchargement de poids, mais \textbf{aucun
+entraînement} — ce qui les met à portée de la machine malgré l'impossibilité
+d'entraîner sur le GPU 780M.
+
+\subsection{E — l'épaisseur de trait : un axe qu'aucune autre famille ne couvre}
+\label{sec:trait}
+
+Aucune des familles A à D n'est conçue pour ignorer l'épaisseur du trait. Or
+c'est justement l'axe sur lequel les mesures (§\ref{sec:mesures}) montrent la
+plus grande fragilité. Deux remèdes :
+
+\begin{itemize}[leftmargin=*,itemsep=3pt]
+  \item \textbf{Squelettiser avant de décrire} — ramener tout trait à une
+  largeur d'un pixel rend la description indépendante de l'épaisseur.
+  \alerte{\texttt{cv2.ximgproc.thinning} est absent} de l'installation, mais
+  \textbf{le projet sait déjà extraire un squelette} :
+  \texttt{engines/vectorise/topology.py} le fait par homologie persistante
+  (GUDHI), sans \texttt{scikit-image}.
+  \item \textbf{Normaliser morphologiquement} — égaliser les épaisseurs
+  médianes des deux images (mesurées par transformée de distance) avant
+  comparaison. Moins radical, beaucoup moins coûteux.
+\end{itemize}
+
+% =====================================================================
+\section{Mesures sur le corpus}
+\label{sec:mesures}
+
+Douze dessins tirés au hasard dans \texttt{Cabrol}, ramenés à 1\,000\,px de
+côté. Chacun est comparé à sa propre version transformée : la vérité terrain est
+donc \emph{parfaite}, on sait exactement quelle transformation a été appliquée.
+La grandeur relevée est la \textbf{médiane du ratio d'inliers} — la proportion
+d'appariements survivant à la vérification géométrique.
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lccc}
+\toprule
+\textbf{Transformation} & \textbf{SIFT} & \textbf{AKAZE} & \textbf{ORB} \\
+\midrule
+identité                  & 1,00 & 1,00 & 1,00 \\
+rotation 5°               & 0,96 & 0,98 & 0,95 \\
+rotation 15°              & 0,97 & 0,98 & 0,95 \\
+rotation 45°              & 0,97 & 0,96 & 0,95 \\
+rotation 90°              & 1,00 & 0,99 & 0,94 \\
+homothétie ×0,5           & 0,88 & 0,91 & \bon{0,98} \\
+homothétie ×2             & 0,97 & 0,97 & 0,85 \\
+contraste +40\,\%         & 0,99 & 0,99 & 1,00 \\
+contraste $-$40\,\%         & 0,99 & 0,94\,\textsuperscript{\dag} & 0,99 \\
+\alerte{trait +2 px}      & 0,85 & 0,95 & 0,93 \\
+\alerte{trait $-$2 px}      & \alerte{0,76}\,\textsuperscript{\dag} & 0,89\,\textsuperscript{\dag} & 0,90 \\
+recadrage à 25\,\%        & 0,96 & 0,95 & 0,95 \\
+rot. 15° + ×0,7 + contraste & 0,94 & 0,95 & 0,97 \\
+JPEG qualité 40           & 0,97 & 0,99 & 0,99 \\
+\midrule
+\textbf{coût médian}      & 148 ms & 71 ms & \bon{18 ms} \\
+\bottomrule
+\end{tabular}
+\caption{Médiane du ratio d'inliers sur 12 dessins.
+\textsuperscript{\dag} au moins un dessin est descendu à un ratio quasi nul
+(SIFT 0,25 ; AKAZE 0,00) — voir ci-dessous.}
+\end{table}
+
+\subsection{Trois enseignements}
+
+\aretenir{\textbf{(1) ORB suffit, et il est huit fois plus rapide que SIFT.}
+Sur ces dessins, ORB tient la rotation (0,94--0,95 quel que soit l'angle), le
+contraste, le recadrage et la compression aussi bien que SIFT, pour 18\,ms
+contre 148. C'est \emph{contraire} à la réputation d'ORB, établie sur des
+photographies : le trait au noir sur fond clair produit des coins très
+contrastés, terrain idéal pour un détecteur FAST.}
+
+\textbf{(2) L'épaisseur de trait est le point faible, pour les trois.} C'est le
+seul axe où la médiane descend sous 0,90, et surtout le seul où l'on observe des
+\alerte{effondrements individuels} : un dessin est tombé à 0,25 avec SIFT, un
+autre à 0,00 avec AKAZE — c'est-à-dire une non-détection complète. L'intuition
+de départ était donc juste, et elle justifie à elle seule la famille E
+(§\ref{sec:trait}).
+
+\textbf{(3) ORB et l'homothétie : attention au sens.} ORB est excellent en
+réduction (0,98 à ×0,5) et faiblit en agrandissement (0,85 à ×2). En pratique on
+peut toujours \emph{réduire} la plus grande des deux images plutôt que d'agrandir
+la plus petite — ce qui place systématiquement ORB dans son bon régime, et coûte
+moins cher au passage.
+
+% =====================================================================
+\section{Le dictionnaire de mérite}
+\label{sec:dico}
+
+\aretenir{\textbf{Idée directrice : la transformation estimée \emph{est}
+l'explication.} On ne construit pas un score explicable après coup — on lit
+l'explication dans l'homographie que la vérification a déjà calculée.}
+
+\subsection{Décomposer l'homographie}
+
+Soit $H$ l'homographie estimée et $A$ sa partie linéaire $2\times2$. Sa
+décomposition en valeurs singulières $A = U\Sigma V^{\mathsf T}$ donne
+immédiatement :
+
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+  \item la \textbf{rotation} : l'angle de la matrice orthogonale $UV^{\mathsf T}$ ;
+  \item l'\textbf{échelle} : $\sqrt{\sigma_1\sigma_2}$ ;
+  \item le \textbf{cisaillement} : l'anisotropie $\sigma_1/\sigma_2$, égale à 1
+    pour une similitude pure ;
+  \item la \textbf{translation} : la dernière colonne de $H$.
+\end{itemize}
+
+\textbf{Vérifié expérimentalement} — on applique une transformation connue, puis
+on regarde ce que la décomposition en retrouve :
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Appliqué} & \textbf{Rotation estimée} & \textbf{Échelle estimée}
+  & \textbf{Anisotropie} \\
+\midrule
+identité                  & \phantom{$-$}0,00° & 1,000 & 1,0000 \\
+rotation 15°              & 15,00°           & 1,000 & 1,0002 \\
+rotation 45°              & 44,98°           & 1,000 & 1,0008 \\
+échelle 0,60              & \phantom{$-$}0,01° & 0,600 & 1,0011 \\
+rot. 30° + échelle 0,75   & 30,01°           & 0,750 & 1,0013 \\
+rot. $-$20° + échelle 1,50  & 20,01°           & 1,500 & 1,0006 \\
+\bottomrule
+\end{tabular}
+\caption{Médianes sur 8 dessins. Erreur de rotation $<0{,}02°$, erreur d'échelle
+$<0{,}001$. Le signe de l'angle dépend de la convention d'axes (l'axe $y$ est
+orienté vers le bas en coordonnées image) : c'est une convention à fixer, pas
+une erreur.}
+\end{table}
+
+\subsection{La couverture asymétrique détecte l'inclusion partielle}
+
+C'est le mécanisme qui répond au cas « une partie d'une image contient une autre
+image ». On projette les quatre coins de $A$ dans le repère de $B$ par $H$, et
+l'on mesure l'aire de l'intersection rapportée à celle de $B$ ; puis la même
+chose dans l'autre sens avec $H^{-1}$. \textbf{Les deux valeurs diffèrent, et
+c'est précisément l'information utile.}
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{rrrr}
+\toprule
+\textbf{Part de la page occupée} & \textbf{Inliers} &
+\textbf{Couverture dessin$\to$page} & \textbf{Couverture page$\to$dessin} \\
+\midrule
+50\,\% & 1\,362 & 0,50 & 1,00 \\
+25\,\% & \phantom{0}750 & 0,25 & 1,00 \\
+10\,\% & \phantom{0}248 & 0,10 & 1,00 \\
+\phantom{0}4\,\% & \phantom{00}12 & 0,04 & 1,00 \\
+\bottomrule
+\end{tabular}
+\caption{Un dessin collé dans une page plus grande. La couverture vaut
+\textbf{exactement} la fraction d'aire occupée, et la détection survit jusqu'à
+4\,\% de la page (12 inliers).}
+\end{table}
+
+\aretenir{\textbf{Deux couvertures égales et proches de 1} $\Rightarrow$ même
+dessin (R1). \textbf{Une couverture proche de 1, l'autre faible} $\Rightarrow$
+l'un est contenu dans l'autre (R2), et la valeur faible \emph{dit quelle
+proportion} il occupe. Un scalaire unique de similarité ne pourrait pas
+distinguer ces deux situations.}
+
+\subsection{Schéma proposé}
+
+\begin{verbatim}
+{
+  "regime": "geometrique" | "partielle" | "semantique",
+  "merite": 0.0-1.0,              # score agrégé, comparable entre régimes
+
+  # --- peuplés en R1 / R2 seulement ---------------------------------
+  "n_inliers": int,               "ratio_inliers": float,
+  "rotation_deg": float,          "echelle": float,
+  "anisotropie": float,           "translation_px": (float, float),
+  "couverture_a_dans_b": float,   "couverture_b_dans_a": float,
+  "gain_photometrique": float,    "offset_photometrique": float,
+  "ratio_epaisseur_trait": float,
+
+  # --- toujours peuplé ----------------------------------------------
+  "cosinus_semantique": float,
+}
+\end{verbatim}
+
+Les champs photométriques s'obtiennent après recalage, en ajustant
+$I_B \approx a\,I_B + b$ sur les pixels appariés : $a$ mesure l'écart de
+contraste, $b$ celui de luminosité. Le ratio d'épaisseur se mesure de même,
+\emph{après} recalage, par transformée de distance sur les deux masques d'encre.
+
+\alerte{Un dictionnaire partiellement vide est une information, pas un défaut} :
+en R3, l'absence de champs géométriques \emph{signifie} qu'aucune transformation
+n'a été trouvée, et c'est exactement ce que l'utilisateur doit savoir avant de
+faire confiance au score.
+
+% =====================================================================
+\section{Architecture recommandée}
+\label{sec:archi}
+
+Quatre étages, du gratuit au coûteux.
+
+\begin{enumerate}[leftmargin=*,itemsep=5pt]
+  \item \textbf{Étage 0 — pré-filtre gratuit.} Réutiliser les mesures
+  \textbf{déjà calculées et mises en cache} par
+  \texttt{media\_restorer.engines.triage} : orientation, densité d'encre,
+  saturations d'encre et de papier. Deux dessins dont la densité d'encre diffère
+  d'un facteur trois ne sont pas des doublons. Coût nul, sur des données
+  existantes.
+
+  \item \textbf{Étage 1 — candidats.} Descripteur global (Fourier-Mellin, et/ou
+  descripteur appris), matrice de similarité en force brute, top-20 par image.
+  Quelques secondes (§\ref{sec:mur}).
+
+  \item \textbf{Étage 2 — vérification.} ORB + \texttt{cv2.USAC\_MAGSAC} sur les
+  86\,930 paires retenues, produisant le dictionnaire du §\ref{sec:dico}.
+  \textbf{26 minutes} au coût mesuré. Repasser en SIFT sur les seuls cas
+  ambigus reste abordable (3,6\,h pour tout, donc quelques minutes pour un
+  résidu).
+
+  \item \textbf{Étage 3 — repli R3.} Pour les paires que la géométrie rejette,
+  cosinus sémantique seul, \textbf{explicitement marqué peu fiable}.
+\end{enumerate}
+
+\aretenir{Budget total réaliste : \textbf{de l'ordre de l'heure} pour tout le
+corpus, sur le seul CPU, sans rien installer d'autre que d'éventuels poids de
+modèle. C'est le rapport 434× entre vérification exhaustive et ciblée
+(§\ref{sec:mur}) qui rend le projet possible.}
+
+% =====================================================================
+\section{Faisabilité sur la machine}
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{lY}
+\toprule
+\textbf{Disponible} & SIFT, ORB, AKAZE, BRISK, KAZE, \texttt{USAC\_MAGSAC},
+\texttt{warpPolar} (OpenCV \textbf{4.13}) ; \texttt{transformers} 4.57.6 pour
+CLIP ; \texttt{numpy}, \texttt{scipy} \\
+\addlinespace
+\textbf{Absent} & \texttt{faiss}, \texttt{hnswlib}, \texttt{annoy}
+(\bon{inutiles} à cette échelle, §\ref{sec:mur}) ; \texttt{sklearn} ;
+\texttt{imagehash} ; \texttt{cv2.ximgproc} (donc pas de \texttt{thinning} —
+voir §\ref{sec:trait}) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Les familles A, B, C et E ne demandent \textbf{aucune installation}. La
+famille D exige de télécharger des poids, mais \textbf{aucun entraînement} :
+l'impossibilité d'entraîner sur le GPU 780M (voir
+\texttt{rapport-reperage-automatique-dessins.tex}, §2) n'est donc pas un
+obstacle ici.
+
+% =====================================================================
+\section{Validation}
+\label{sec:validation}
+
+Deux jeux complémentaires, l'un contrôlé, l'autre réel.
+
+\textbf{Synthétique} — les transformations du §\ref{sec:mesures}. Vérité terrain
+parfaite, invariance mesurable axe par axe. C'est le seul moyen de savoir
+\emph{quelle} différence fait échouer une méthode.
+
+\textbf{Paires réelles} — le corpus contient \textbf{1\,587 noms de fichiers
+présents dans au moins deux dossiers différents}. Je craignais une vérité
+terrain très bruitée, une même numérotation d'appareil pouvant produire des
+homonymes sans rapport. \textbf{La mesure dit le contraire} :
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lr}
+\toprule
+Paires de même nom testées & 25 \\
+Reconnues comme vrais doublons (ratio d'inliers $\geq0{,}5$) & \bon{25} \\
+Collisions de nom & 0 \\
+Ratio d'inliers observé & 0,87 à 1,00 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\alerte{Nuance statistique nécessaire} : 25 paires sur 1\,587, c'est un
+échantillon étroit. Zéro échec sur 25 est compatible avec un taux réel de
+collisions allant jusqu'à environ 14\,\% (intervalle de confiance à 95\,\%). La
+conclusion prudente est donc « les homonymes sont \emph{majoritairement} de
+vrais doublons », et non « il n'y a aucune collision ». Un contrôle sur une
+centaine de paires resserrerait utilement cette borne.
+
+% =====================================================================
+\section{Limites assumées}
+
+\begin{itemize}[leftmargin=*,itemsep=4pt]
+  \item \alerte{R3 restera nettement moins fiable} que R1 et R2. Une variante
+  redessinée ne se distingue d'un autre dessin du même auteur, dans le même
+  style, sur le même sujet, que par une appréciation qu'aucun descripteur ne
+  formalise proprement aujourd'hui. Le rapport propose une piste, pas une
+  garantie.
+
+  \item \textbf{Aucun seuil unique ne séparera proprement} doublons et
+  non-doublons — c'est précisément pourquoi le mérite est gradué et accompagné
+  de son dictionnaire. Le seuil dépend de ce que l'on cherche : dédoublonner un
+  fonds ou retrouver toutes les réutilisations d'un dessin n'appellent pas la
+  même tolérance.
+
+  \item \textbf{Une revue humaine restera nécessaire.} Sur 8\,693 images, même
+  une précision de 99\,\% laisse des centaines de paires à trancher. C'est
+  l'argument décisif en faveur d'un mérite \emph{explicable} : « rotation de
+  15°, échelle 0,7, couverture 0,25 » se vérifie d'un coup d'\oe il, « score
+  0,83 » ne se vérifie pas.
+
+  \item Les mesures portent sur \textbf{12 dessins} pour l'invariance et
+  \textbf{8} pour la décomposition. Les écarts entre détecteurs y sont nets,
+  mais un corpus plus large pourrait déplacer les valeurs de quelques
+  centièmes.
+\end{itemize}
+
+% =====================================================================
+\section*{Sources}
+\addcontentsline{toc}{section}{Sources}
+
+\small\raggedright
+\begin{itemize}[leftmargin=*,itemsep=3pt]
+  \item E.~Pizzi \emph{et al.}, \emph{A Self-Supervised Descriptor for Image
+  Copy Detection} (SSCD), CVPR 2022 —
+  \url{https://arxiv.org/abs/2202.10261} ;
+  code : \url{https://github.com/facebookresearch/sscd-copy-detection}
+  \item M.~Douze \emph{et al.}, \emph{Results and findings of the 2021 Image
+  Similarity Challenge} (jeu DISC21) —
+  \url{https://arxiv.org/pdf/2202.04007}
+  \item B.~S.~Reddy, B.~N.~Chatterji, \emph{An FFT-based Technique for
+  Translation, Rotation and Scale-Invariant Image Registration} —
+  présentation et implémentation :
+  \url{https://sthoduka.github.io/imreg_fmt/}
+  \item P.~Lindenberger \emph{et al.}, \emph{LightGlue: Local Feature Matching
+  at Light Speed}, ICCV 2023 —
+  \url{https://github.com/cvg/LightGlue}
+  \item M.~Oquab \emph{et al.}, \emph{DINOv2: Learning Robust Visual Features
+  without Supervision} —
+  \url{https://arxiv.org/html/2304.07193v2}
+  \item \emph{A Review on Near-Duplicate Detection of Images using Computer
+  Vision Techniques} — \url{https://arxiv.org/pdf/2009.03224}
+  \item \emph{Benchmarking Pretrained Vision Embeddings for Near- and Duplicate
+  Detection} — \url{https://arxiv.org/pdf/2312.07273}
+  \item Littérature « sketch » : \emph{Sketch retrieval via local dense stroke
+  features} —
+  \url{https://www.sciencedirect.com/science/article/abs/pii/S0262885615001389}
+\end{itemize}
+
+\medskip
+\textbf{Mesures.} Tous les chiffres des sections \ref{sec:mur},
+\ref{sec:mesures}, \ref{sec:dico} et \ref{sec:validation} ont été obtenus sur le
+corpus \texttt{Dessins/Cabrol} avec OpenCV 4.13, sur le CPU seul. Aucune valeur
+n'est reprise de la littérature sans être signalée comme telle.
+
+\end{document}
