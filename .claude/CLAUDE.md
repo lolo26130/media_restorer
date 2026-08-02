@@ -64,6 +64,15 @@ Architecture
                     est chargée. Le chemin complet voyage sur la cellule
                     (Qt.ItemDataRole.UserRole) car le tableau est TRIABLE :
                     l'index de ligne ne désigne plus le bon fichier après un tri
+  - extensions/doublons/ → recherche, revue et étiquetage des doublons.
+                    ParameterTree ENGENDRÉ depuis METHODS (groupé par étage) ;
+                    _SearchWorker et _WriteWorker (QThread, result_ready) ;
+                    arbre séparant GROUPES et INCLUSIONS ; deux ImagePreview
+                    côte à côte + la PHRASE explicative (« B est un détail de
+                    A — rotation 15°, couverture 25 % ») qui se vérifie d'un
+                    coup d'œil, là où « score 0,83 » ne se vérifie pas.
+                    Non destructif : étiquettes + export CSV/HTML, JAMAIS de
+                    déplacement ni de suppression (fonds patrimonial)
 - image_click.py  → widget PARTAGÉ ImageClick (pg.ImageView) : survol + Entrée/
                     Espace/Q, signaux tagging_finished/point_marked, overlay
                     show_existing_points. Coordonnées émises/stockées en
@@ -132,6 +141,38 @@ Architecture
                     AUTO-SUFFISANTS et SANS « / » (séparateur de TagsList).
                     tags.py : branche media_restorer/Tri/<branche>/<classe>,
                     owns restreint. cache.py : JSON, invalidation (taille, mtime)
+  - engines/duplicates/ → cœur de la DÉTECTION DE DOUBLONS, sans Qt, ne dérive
+                    PAS de BaseEngine (contrat : corpus → graphe). Voir
+                    docs/rapport-doublons-dessins.tex pour la méthode et ses
+                    mesures. TROIS RÉGIMES : R1 copie géométrique, R2 inclusion
+                    partielle (les deux couverts), R3 variante redessinée (PAS
+                    couvert — exige des descripteurs appris, lot ultérieur).
+                    methods.py : catalogue DÉCLARATIF (Method/METHODS, 3 étages)
+                    qui pilote le ParameterTree ⇒ ajouter une méthode ne touche
+                    aucune ligne de Qt. descriptors.py : Fourier-Mellin
+                    log-polaire (rotation+échelle+translation) et profil
+                    d'orientations (peu sensible à l'épaisseur du trait).
+                    candidates.py : similarité PAR BLOCS, la matrice complète
+                    n'est JAMAIS matérialisée — à 8 693 images elle pèse 0,3 Go,
+                    à 43 465 (×5 prévu) 7,6 Go. Résultat EXACT, identique au
+                    calcul direct (test verrouillé). Aucun index approché
+                    nécessaire sous ~10⁵ images. verify.py : ORB + USAC_MAGSAC
+                    (ORB mesuré 8× plus rapide que SIFT et aussi invariant sur
+                    ces dessins — contraire à sa réputation, établie sur des
+                    photos). merit.py : LA TRANSFORMATION ESTIMÉE EST
+                    L'EXPLICATION — décomposition SVD de H (rotation, échelle,
+                    anisotropie, exactes à 0,02° et 0,001), COUVERTURES
+                    ASYMÉTRIQUES (0,25/1,00 ⇒ « A est un détail de B » ;
+                    1,00/1,00 ⇒ même dessin), photométrie et épaisseur mesurées
+                    APRÈS recalage. Merit.explain() rend une PHRASE lisible.
+                    groups.py : ⚠ PIÈGE DE TRANSITIVITÉ — les composantes
+                    connexes ne se calculent QUE sur les arêtes symétriques ;
+                    A⊃B et B⊃C n'implique pas A≈C, sinon tout un fonds
+                    d'affiches fusionne en un groupe géant. pipeline.py : écarte
+                    les paires en régime SÉMANTIQUE (sans famille D, ce ne sont
+                    que des candidats rejetés — les remonter ferait 32 « paires
+                    incertaines » sur 36, mesuré). tags.py : branche
+                    media_restorer/Doublons/, owns RESTREINT
   - engines/face_id/ → cœur de auto_face_id_register, sans Qt, ne dérive PAS de
                     BaseEngine. detect.py : détection ZERO-SHOT (vocabulaire
                     ouvert) pilotée par la liste de repères = requêtes texte

@@ -96,6 +96,7 @@ class ImageTreatmentWindow(QMainWindow):
         import media_restorer.extensions.manual_mouse_points  # noqa: F401
         import media_restorer.extensions.auto_face_id_register  # noqa: F401
         import media_restorer.extensions.pre_classement  # noqa: F401
+        import media_restorer.extensions.doublons  # noqa: F401
 
         self._launch_actions: list[QAction] = []
         for extension in all_extensions():
