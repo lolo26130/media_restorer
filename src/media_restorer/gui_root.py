@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QUrl, pyqtSlot
 
 from media_restorer.app_settings import SKIN_KEY, TOOLTIP_MODE_KEY, app_settings
+from media_restorer.gui_shots import ShotInventoryPanel
 from media_restorer.gui_widgets import ImagePreview, InfoExifPanel
 from media_restorer.extensions import Extension, ExtensionContext, all_extensions
 from media_restorer.theme import THEME_SYSTEM, apply_theme
@@ -150,6 +151,25 @@ class ImageTreatmentWindow(QMainWindow):
         self._preview_dock.setWidget(self._preview_panel)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._preview_dock)
 
+        # ── Dock « Correspondances RAW » ────────────────────────────────
+        # Inventaire des paires RAW/JPEG : quel JPEG vient de quel NEF, et
+        # surtout quels RAW n'ont pas encore de dérivé.  Les RAW restent hors
+        # de toutes les autres chaînes (voir engines/shots).
+        # TABIFIÉ avec « Infos, Exif » pour ne pas encombrer : on bascule d'un
+        # onglet à l'autre plutôt que d'empiler trois docks.
+        # Le scan ne part JAMAIS tout seul — il coûte une minute sur 10 000
+        # fichiers, et se déclenche par un bouton du panneau.
+        self._shots_panel = ShotInventoryPanel()
+        self._shots_dock = QDockWidget("Correspondances RAW", self)
+        self._shots_dock.setAllowedAreas(
+            Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
+        )
+        self._shots_dock.setWidget(self._shots_panel)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._shots_dock)
+        self.tabifyDockWidget(self._info_dock, self._shots_dock)
+        self._info_dock.raise_()          # « Infos, Exif » reste l'onglet visible
+        self._shots_panel.current_image_changed.connect(self._on_extension_image)
+
     # ------------------------------------------------------------------
     # Tooltips
     # ------------------------------------------------------------------
@@ -224,6 +244,7 @@ class ImageTreatmentWindow(QMainWindow):
         les deux docks **reviennent** à la fin d'un traitement par lot (voir
         :meth:`_on_extension_image`).
         """
+        self._shots_panel.set_target(self._target, is_directory=self._is_directory)
         if self._target is None:
             self._info_panel.clear()
             self._preview_panel.clear()

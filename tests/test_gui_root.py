@@ -433,3 +433,108 @@ def test_an_extension_image_drives_both_docks_then_reverts(window, tmp_path):
 
     win._on_extension_image(None)                  # fin de lot
     assert win._preview_panel.current_path == cible
+
+
+# ---------------------------------------------------------------------------
+# Dock « Correspondances RAW »
+# ---------------------------------------------------------------------------
+
+def _inventaire(tmp_path):
+    """Un inventaire factice couvrant les quatre catégories."""
+    from media_restorer.engines.shots import MATCH_NAME, MATCH_SURE, ShotInventory, ShotPair
+
+    nef, jpg = tmp_path / "a.nef", tmp_path / "a.jpg"
+    return ShotInventory(
+        pairs=[ShotPair(nef, jpg, MATCH_SURE,
+                        meta={"Model": "NIKON D800", "ShutterCount": "14427"})],
+        raw_only=[tmp_path / "orphelin.nef"],
+        jpeg_only=[tmp_path / "scan.jpg"],
+        unconfirmed=[ShotPair(tmp_path / "d.nef", tmp_path / "d.jpg", MATCH_NAME)],
+    )
+
+
+def test_shots_dock_is_present_and_tabified_with_the_exif_dock(window):
+    """Tabifié pour ne pas empiler un troisième dock à droite."""
+    assert window._shots_dock.windowTitle() == "Correspondances RAW"
+    assert window._info_dock in window.tabifiedDockWidgets(window._shots_dock)
+
+
+def test_shots_scan_never_starts_on_its_own(window, tmp_path):
+    """Le scan coûte une minute : il ne part que sur clic explicite."""
+    window._set_target(tmp_path, is_directory=True)
+
+    assert window._shots_panel._button.isEnabled()      # prêt…
+    assert window._shots_panel._inventory is None       # …mais rien n'a démarré
+    assert "Scanner" in window._shots_panel._status.text()
+
+
+def test_shots_scan_button_is_disabled_for_a_file_target(window, tmp_path):
+    fichier = _png(tmp_path / "une.png")
+
+    window._set_target(fichier, is_directory=False)
+
+    assert not window._shots_panel._button.isEnabled()
+
+
+def test_each_tab_carries_its_count(qtbot, tmp_path):
+    from media_restorer.gui_shots import ShotInventoryPanel
+
+    panneau = ShotInventoryPanel()
+    qtbot.addWidget(panneau)
+
+    panneau._on_scanned(_inventaire(tmp_path))
+
+    titres = [panneau._tabs.tabText(i) for i in range(panneau._tabs.count())]
+    assert titres == ["Paires (1)", "RAW sans JPEG (1)",
+                      "JPEG sans RAW (1)", "⚠ À confirmer (1)"]
+    assert "RAW sans JPEG" in panneau._status.text()
+
+
+def test_selecting_a_pair_explains_why_it_was_matched(qtbot, tmp_path):
+    """L'utilisateur doit pouvoir juger l'appariement, pas seulement le lire."""
+    from media_restorer.gui_shots import ShotInventoryPanel
+
+    vus = []
+    panneau = ShotInventoryPanel(preview_fn=lambda p: vus.append(p) or None)
+    qtbot.addWidget(panneau)
+    panneau._on_scanned(_inventaire(tmp_path))
+
+    arbre = panneau._trees["pairs"]
+    arbre.setCurrentItem(arbre.topLevelItem(0))
+
+    assert "NIKON D800" in panneau._details.text()
+    assert "14427" in panneau._details.text()
+    # Un RAW passe par l'extraction d'aperçu, JAMAIS par Pillow directement.
+    assert vus == [tmp_path / "a.nef"]
+
+
+def test_a_raw_without_extractable_preview_says_so(qtbot, tmp_path):
+    from media_restorer.gui_shots import ShotInventoryPanel
+
+    panneau = ShotInventoryPanel(preview_fn=lambda p: None)
+    qtbot.addWidget(panneau)
+    panneau._on_scanned(_inventaire(tmp_path))
+
+    arbre = panneau._trees["raw_only"]
+    arbre.setCurrentItem(arbre.topLevelItem(0))
+
+    assert "aucun aperçu" in panneau._details.text()
+
+
+def test_shots_export_writes_every_category(qtbot, tmp_path, monkeypatch):
+    from PyQt6.QtWidgets import QFileDialog
+
+    from media_restorer.gui_shots import ShotInventoryPanel
+
+    cible = tmp_path / "correspondances.csv"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        lambda *a, **kw: (str(cible), "CSV (*.csv)"))
+    panneau = ShotInventoryPanel()
+    qtbot.addWidget(panneau)
+    panneau._on_scanned(_inventaire(tmp_path))
+
+    panneau._export_csv()
+
+    lignes = cible.read_text(encoding="utf-8").strip().splitlines()
+    assert lignes[0] == "categorie,raw,jpeg,methode,appareil"
+    assert len(lignes) == 5                       # en-tête + les quatre catégories
