@@ -16,6 +16,7 @@ from media_restorer.engines.duplicates import (
     METHODS,
     REGIME_GEOMETRIQUE,
     REGIME_PARTIEL,
+    REGIME_SEMANTIQUE,
     DuplicateGraph,
     Merit,
     Pair,
@@ -105,7 +106,8 @@ def test_methods_are_grouped_by_stage(qtbot, tmp_path):
     win = _make_window(qtbot, tmp_path)
 
     etages = [c.name() for c in win._param_root.children() if c.type() == "group"]
-    assert etages == ["prefilter", "candidate", "verify"]
+    # « calcul » (appareil, modèle, seuil sémantique) s'ajoute aux trois étages.
+    assert etages == ["prefilter", "candidate", "verify", "calcul"]
 
 
 def test_expensive_method_is_unchecked_by_default(qtbot, tmp_path):
@@ -329,3 +331,98 @@ def test_a_search_failure_is_reported_not_swallowed(qtbot, tmp_path, monkeypatch
 
     assert erreurs
     assert "Échec" in win.statusBar().currentMessage()
+
+
+# ---------------------------------------------------------------------------
+# v2 — appareil, modèle, verdicts
+# ---------------------------------------------------------------------------
+
+def test_device_and_model_selectors_exist_with_safe_defaults(qtbot, tmp_path):
+    """« Auto » sonde puis retombe sur le processeur : jamais de gel imposé."""
+    win = _make_window(qtbot, tmp_path)
+
+    assert win._param_root["calcul", "device"] == "auto"
+    assert win._param_root["calcul", "model"] == "dinov2_small"
+    assert 0.0 <= win._param_root["calcul", "sem_threshold"] <= 1.0
+
+
+def test_semantic_threshold_is_separate_from_the_geometric_one(qtbot, tmp_path):
+    """Réutiliser le seuil géométrique noierait le résultat (32/36 en v1)."""
+    win = _make_window(qtbot, tmp_path)
+
+    assert win._param_root["calcul", "sem_threshold"] > win._param_root["threshold"]
+
+
+def test_semantic_method_is_unchecked_by_default(qtbot, tmp_path):
+    """Elle télécharge des poids : à cocher sciemment."""
+    win = _make_window(qtbot, tmp_path)
+
+    assert win._param_root["verify", "semantic_variants"] is False
+
+
+def test_warning_changes_with_the_semantic_method(qtbot, tmp_path):
+    win = _make_window(qtbot, tmp_path)
+    assert "ne sont pas" in win._avertissement.text()
+
+    win._param_root.child("verify", "semantic_variants").setValue(True)
+
+    assert "présomptions" in win._avertissement.text()
+
+
+def _variant_graph():
+    return build_graph([_pair("/c/v1.jpg", "/c/v2.jpg", regime=REGIME_SEMANTIQUE)])
+
+
+def test_verdict_buttons_appear_only_on_a_variant(qtbot, tmp_path, monkeypatch):
+    """Confirmer une paire dont la géométrie fait la preuve n'apprendrait rien."""
+    win = _make_window(qtbot, tmp_path)
+    win.on_actionSearch_triggered()                      # graphe géométrique
+    win._ui.treeGroups.setCurrentItem(_first_pair_item(win))
+
+    assert not win._btn_confirm.isEnabled()
+
+    win2 = _make_window(qtbot, tmp_path, search_fn=lambda *a, **k: _variant_graph())
+    win2.on_actionSearch_triggered()
+    win2._ui.treeGroups.setCurrentItem(_first_pair_item(win2))
+
+    assert win2._btn_confirm.isEnabled()
+
+
+def test_a_verdict_is_recorded_and_calibration_reported(qtbot, tmp_path, monkeypatch):
+    from media_restorer.engines.duplicates import verdicts as V
+
+    fichier = tmp_path / "v.json"
+    monkeypatch.setattr(V, "store_path", lambda: fichier)
+    win = _make_window(qtbot, tmp_path, search_fn=lambda *a, **k: _variant_graph())
+    win.on_actionSearch_triggered()
+    win._ui.treeGroups.setCurrentItem(_first_pair_item(win))
+
+    win._btn_confirm.click()
+
+    enregistres = V.load(fichier)
+    assert len(enregistres) == 1
+    assert next(iter(enregistres.values())).confirmed is True
+    # Trop peu de verdicts pour un seuil : l'outil le dit plutôt que d'inventer.
+    assert "au moins" in win.statusBar().currentMessage()
+
+
+def test_variants_branch_is_named_as_a_presumption(qtbot, tmp_path):
+    win = _make_window(qtbot, tmp_path, search_fn=lambda *a, **k: _variant_graph())
+    win.on_actionSearch_triggered()
+
+    arbre = win._ui.treeGroups
+    racines = [arbre.topLevelItem(i).text(0) for i in range(arbre.topLevelItemCount())]
+    assert any("Variantes possibles" in r and "confirmer" in r for r in racines)
+
+
+def test_comparing_models_without_cache_says_so(qtbot, tmp_path, monkeypatch):
+    from media_restorer.engines.duplicates import embeddings as E
+
+    monkeypatch.setattr(E, "load_cache", lambda *a, **k: {})
+    vus = []
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **kw: vus.append(a))
+    win = _make_window(qtbot, tmp_path)
+
+    win._btn_compare.click()
+
+    assert vus and "Aucune empreinte" in vus[0][2]

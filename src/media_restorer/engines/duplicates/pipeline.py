@@ -45,6 +45,9 @@ def find_duplicates(
     top_k: int = 20,
     threshold: float = 0.5,
     max_megapixels: float | None = 50.0,
+    semantic_threshold: float = 0.85,
+    embedder=None,
+    embedding_model: str = "dinov2_small",
     on_progress: ProgressCallback | None = None,
     on_stage: StageCallback | None = None,
 ) -> DuplicateGraph:
@@ -104,7 +107,26 @@ def find_duplicates(
     verifs = methods_for(STAGE_VERIFY, cles)
     if not verifs:
         return DuplicateGraph(groups=[], inclusions=[], uncertain=[])
-    methode = verifs[0].key
+    # « semantic_variants » vit au même étage mais n'est PAS un détecteur de
+    # traits : le passer à verify_paths donnerait silencieusement ORB par défaut.
+    # On sélectionne explicitement le premier détecteur géométrique.
+    geometriques = [m.key for m in verifs if m.key in ("orb_magsac", "sift_magsac")]
+    methode = geometriques[0] if geometriques else "orb_magsac"
+
+    # --- Étage 2 bis : empreintes sémantiques (régime R3) ------------------
+    # Un seuil PROPRE, distinct du seuil géométrique : sur des dessins au trait
+    # les descripteurs se ressemblent tous, et réutiliser le seuil géométrique
+    # noierait le résultat sous les faux positifs (mesuré en v1 : 32 sur 36).
+    semantique_actif = any(m.key == "semantic_variants" for m in verifs)
+    cos_semantique: dict[tuple[int, int], float] = {}
+    if semantique_actif and embedder is not None:
+        _stage(on_stage, "Calcul des empreintes sémantiques…")
+        from media_restorer.engines.duplicates import embeddings as _emb
+
+        vect = _emb.embed_corpus(retenus, embedder, embedding_model,
+                                 on_progress=on_progress)
+        for i, j, _ in paires:
+            cos_semantique[(i, j)] = float(np.dot(vect[i], vect[j]))
 
     _stage(on_stage, f"Vérification de {len(paires)} paires candidates…")
     verifiees: list[Pair] = []
@@ -118,6 +140,13 @@ def find_duplicates(
         # totalité des candidats retombe ici.  On les écarte donc.
         if m.regime != REGIME_SEMANTIQUE and m.merite >= threshold:
             verifiees.append(Pair(a=retenus[i], b=retenus[j], merit=m))
+        elif m.regime == REGIME_SEMANTIQUE and semantique_actif:
+            # La géométrie a rejeté : c'est peut-être une variante redessinée.
+            cs = cos_semantique.get((i, j))
+            if cs is not None and cs >= semantic_threshold:
+                m.cosinus_semantique = cs
+                m.merite = cs
+                verifiees.append(Pair(a=retenus[i], b=retenus[j], merit=m))
         if on_progress is not None:
             on_progress(index, len(paires))
 

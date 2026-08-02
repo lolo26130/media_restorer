@@ -38,7 +38,9 @@ from media_restorer.engines.duplicates import (
     top_k,
     verify_pair,
 )
-from media_restorer.engines.duplicates import candidates, merit, methods
+from media_restorer.engines.duplicates import (benchmark, candidates, device,
+                                               embeddings, merit, methods,
+                                               verdicts)
 from media_restorer.engines.duplicates import tags as dup_tags
 
 
@@ -81,7 +83,7 @@ def test_method_catalogue_is_coherent():
 
 def test_methods_are_filtered_by_stage():
     verif = methods_for(STAGE_VERIFY, tuple(m.key for m in methods.METHODS))
-    assert {m.key for m in verif} == {"orb_magsac", "sift_magsac"}
+    assert {m.key for m in verif} == {"orb_magsac", "sift_magsac", "semantic_variants"}
     assert all(m.stage == STAGE_VERIFY for m in verif)
 
 
@@ -420,3 +422,204 @@ def test_a_locked_file_does_not_stop_the_batch():
     ecrites, echecs = dup_tags.write_graph(graph, runner=runner)
 
     assert ecrites == 1 and len(echecs) == 1
+
+
+# ---------------------------------------------------------------------------
+# v2 — appareil de calcul
+# ---------------------------------------------------------------------------
+
+def test_forced_modes_never_probe():
+    """Un mode explicite ne doit pas payer le coût d'une sonde."""
+    def interdit():
+        raise AssertionError("la sonde ne devait pas être appelée")
+
+    assert device.resolve(device.DEVICE_CPU, probe=interdit)[0] == "cpu"
+    assert device.resolve(device.DEVICE_GPU, probe=interdit)[0] == "cuda"
+
+
+def test_auto_falls_back_when_the_gpu_hangs():
+    """Le cas qui justifie la sonde en sous-processus."""
+    appareil, raison = device.resolve(
+        device.DEVICE_AUTO, probe=lambda: (False, "le GPU n'a pas répondu en 45 s")
+    )
+
+    assert appareil == "cpu"
+    assert "n'a pas répondu" in raison
+
+
+def test_auto_uses_the_gpu_when_available():
+    appareil, raison = device.resolve(
+        device.DEVICE_AUTO, probe=lambda: (True, "AMD Radeon 780M")
+    )
+
+    assert appareil == "cuda" and "780M" in raison
+
+
+def test_probe_environment_sets_the_required_override():
+    """Sans ce réglage : « HIP error: invalid device function » (mesuré)."""
+    assert device.probe_environment()["HSA_OVERRIDE_GFX_VERSION"] == device.HSA_OVERRIDE
+    assert device.HSA_OVERRIDE == "11.0.0"     # et non 11.0.2, qui fige la machine
+
+
+def test_probe_is_injectable_so_tests_never_touch_the_gpu():
+    assert device.probe_gpu(runner=lambda: (False, "substitut")) == (False, "substitut")
+
+
+# ---------------------------------------------------------------------------
+# v2 — empreintes et cache
+# ---------------------------------------------------------------------------
+
+def _fake_embedder(dim: int = 8):
+    def embed(paths, *, on_progress=None):
+        # Empreinte déterministe dérivée du nom : deux appels donnent le même
+        # vecteur, ce qui permet de tester le cache.
+        vect = np.stack([
+            np.full(dim, (hash(p.name) % 97) / 97.0, dtype=np.float32) for p in paths
+        ])
+        if on_progress:
+            on_progress(len(paths), len(paths))
+        return vect
+    return embed
+
+
+def test_embedding_catalogue_is_coherent():
+    assert {m.key for m in embeddings.EMBEDDING_MODELS} == set(
+        embeddings.EMBEDDING_MODELS_BY_KEY)
+    assert embeddings.DEFAULT_MODEL in embeddings.EMBEDDING_MODELS_BY_KEY
+    assert all(m.notes.strip() for m in embeddings.EMBEDDING_MODELS)
+
+
+def test_unknown_model_is_refused_loudly():
+    with pytest.raises(ValueError):
+        embeddings.build_embedder("modele_inexistant")
+
+
+def test_embeddings_round_trip_through_the_cache(tmp_path):
+    img = _write(tmp_path / "a.png", _drawing(7))
+    fichier = tmp_path / "cache.json"
+
+    v1 = embeddings.embed_corpus([img], _fake_embedder(), "dinov2_small",
+                                 cache_file=fichier)
+    appels = []
+
+    def compteur(paths, *, on_progress=None):
+        appels.append(list(paths))
+        return _fake_embedder()(paths)
+
+    v2 = embeddings.embed_corpus([img], compteur, "dinov2_small", cache_file=fichier)
+
+    assert np.allclose(v1, v2)
+    assert appels == []                       # rien n'a été recalculé
+
+
+def test_cache_is_invalidated_by_a_change_of_MODEL(tmp_path):
+    """Comparer des vecteurs DINOv2 à des vecteurs CLIP donnerait n'importe quoi."""
+    img = _write(tmp_path / "a.png", _drawing(8))
+    fichier = tmp_path / "cache.json"
+    embeddings.embed_corpus([img], _fake_embedder(), "dinov2_small", cache_file=fichier)
+
+    assert embeddings.load_cache("dinov2_small", fichier) != {}
+    assert embeddings.load_cache("clip_base", fichier) == {}
+
+
+def test_cache_is_invalidated_when_the_file_changes(tmp_path):
+    img = _write(tmp_path / "a.png", _drawing(9))
+    fichier = tmp_path / "cache.json"
+    embeddings.embed_corpus([img], _fake_embedder(), "dinov2_small", cache_file=fichier)
+
+    _write(img, _drawing(10, size=(300, 300)))
+
+    assert embeddings.load_cache("dinov2_small", fichier) == {}
+
+
+# ---------------------------------------------------------------------------
+# v2 — verdicts et calibration
+# ---------------------------------------------------------------------------
+
+def test_pair_key_is_symmetric_and_stable():
+    """Un verdict doit survivre à un reclassement du corpus."""
+    assert verdicts.pair_key("/c/a.jpg", "/c/b.jpg") == verdicts.pair_key("/c/b.jpg", "/c/a.jpg")
+    assert verdicts.pair_key("/c/a.jpg", "/c/b.jpg") != verdicts.pair_key("/c/a.jpg", "/c/z.jpg")
+
+
+def test_a_new_verdict_replaces_the_previous_one(tmp_path):
+    """L'humain a le droit de se raviser."""
+    fichier = tmp_path / "v.json"
+    a, b = Path("/c/a.jpg"), Path("/c/b.jpg")
+    verdicts.record(a, b, True, model="m", cosine=0.9, path=fichier)
+    verdicts.record(a, b, False, model="m", cosine=0.9, path=fichier)
+
+    assert verdicts.verdict_for(a, b, fichier).confirmed is False
+    assert len(verdicts.load(fichier)) == 1
+
+
+def test_calibration_refuses_to_speak_too_early():
+    peu = [verdicts.Verdict(f"p{i}", i < 2, "m", 0.5, "") for i in range(4)]
+
+    resultat = verdicts.calibrate(peu)
+
+    assert resultat["suffisant"] is False
+    assert "au moins" in verdicts.describe(resultat)
+
+
+def test_calibration_finds_the_separating_threshold():
+    juges = ([verdicts.Verdict(f"p{i}", True, "m", 0.90 + i * 0.001, "") for i in range(8)]
+             + [verdicts.Verdict(f"n{i}", False, "m", 0.40 + i * 0.001, "") for i in range(8)])
+
+    resultat = verdicts.calibrate(juges)
+
+    assert resultat["suffisant"] is True
+    assert 0.41 < resultat["seuil"] <= 0.90
+    assert resultat["precision"] == 1.0 and resultat["rappel"] == 1.0
+
+
+def test_calibration_needs_both_kinds_of_verdict():
+    """Que des confirmés : aucun seuil n'a de sens."""
+    que_des_oui = [verdicts.Verdict(f"p{i}", True, "m", 0.9, "") for i in range(12)]
+
+    assert verdicts.calibrate(que_des_oui)["suffisant"] is False
+
+
+def test_benchmark_ranks_models_on_the_same_pairs():
+    juges = [verdicts.Verdict(f"p{i}", i < 8, "—", 0.0, "",
+                              path_a=f"/c/a{i}.jpg", path_b=f"/c/b{i}.jpg")
+             for i in range(16)]
+
+    def vecteurs(ecart):
+        out = {}
+        for i, v in enumerate(juges):
+            base = np.zeros(4, np.float32); base[i % 4] = 1.0
+            out[Path(v.path_a)] = base
+            out[Path(v.path_b)] = base if v.confirmed else base * ecart + (1 - ecart)
+        return out
+
+    res = benchmark.compare_models(juges, {"net": vecteurs(0.0), "flou": vecteurs(0.99)})
+
+    assert res["meilleur"] == "net"
+    assert "pas une vérité générale" in res["message"]
+
+
+def test_benchmark_refuses_with_too_few_verdicts():
+    res = benchmark.compare_models([verdicts.Verdict("p", True, "m", 0.9, "")], {"x": {}})
+
+    assert res["meilleur"] is None and "au moins" in res["message"]
+
+
+# ---------------------------------------------------------------------------
+# v2 — étiquette « Variante » : confirmées seulement
+# ---------------------------------------------------------------------------
+
+def test_only_confirmed_variants_are_tagged(tmp_path, monkeypatch):
+    """Une présomption non validée n'a rien à faire dans les métadonnées."""
+    fichier = tmp_path / "v.json"
+    monkeypatch.setattr(verdicts, "store_path", lambda: fichier)
+
+    confirmee = _pair("/c/x.jpg", "/c/y.jpg", REGIME_SEMANTIQUE)
+    proposee = _pair("/c/p.jpg", "/c/q.jpg", REGIME_SEMANTIQUE)
+    graphe = build_graph([confirmee, proposee])
+    verdicts.record(confirmee.a, confirmee.b, True, model="m", cosine=0.9, path=fichier)
+
+    marquees = dup_tags.confirmed_variants(graphe)
+
+    assert marquees == {confirmee.a, confirmee.b}
+    assert proposee.a not in marquees

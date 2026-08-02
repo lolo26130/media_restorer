@@ -21,6 +21,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QDockWidget,
+    QPushButton,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -35,12 +36,17 @@ from media_restorer.app_settings import TOOLTIP_MODE_KEY, app_settings
 from media_restorer.digikam_tags import ExiftoolRunner
 from media_restorer.engines.duplicates import (
     METHODS,
+    REGIME_SEMANTIQUE,
     STAGE_ORDER,
     STAGE_TITLES,
     DuplicateGraph,
     default_keys,
 )
+from media_restorer.engines.duplicates import benchmark as _benchmark
+from media_restorer.engines.duplicates import device as _device
+from media_restorer.engines.duplicates import embeddings as _emb
 from media_restorer.engines.duplicates import pipeline as _pipeline
+from media_restorer.engines.duplicates import verdicts as _verdicts
 from media_restorer.engines.duplicates import report as _report
 from media_restorer.engines.duplicates import tags as _dup_tags
 from media_restorer.gui_widgets import ImagePreview
@@ -58,10 +64,17 @@ _KEY_METHODS = _SETTINGS_PREFIX + "methods"
 _KEY_TOPK = _SETTINGS_PREFIX + "top_k"
 _KEY_THRESHOLD = _SETTINGS_PREFIX + "threshold"
 _KEY_MAX_MPX = _SETTINGS_PREFIX + "max_megapixels"
+_KEY_DEVICE = _SETTINGS_PREFIX + "device"
+_KEY_MODEL = _SETTINGS_PREFIX + "embedding_model"
+_KEY_SEM_THRESHOLD = _SETTINGS_PREFIX + "semantic_threshold"
 
 DEFAULT_TOP_K = 20
 DEFAULT_THRESHOLD = 0.50
 DEFAULT_MAX_MEGAPIXELS = 50
+#: Seuil sémantique de départ, DISTINCT du seuil géométrique.  Volontairement
+#: élevé : sur des dessins au trait, les empreintes se ressemblent toutes.
+#: Il n'a pas vocation à rester — la calibration par verdicts le remplace.
+DEFAULT_SEMANTIC_THRESHOLD = 0.85
 
 compile_ui(_UI_SRC, _UI_PY)
 compile_qrc(_QRC_SRC, _QRC_PY)
@@ -191,12 +204,30 @@ class DoublonsGUI(QMainWindow):
         )
         self._explanation.setStyleSheet("padding:6px;")
 
+        # Verdicts : ils ne servent QUE pour les variantes redessinées, seul
+        # régime sans preuve géométrique.  Confirmer une paire que la géométrie
+        # a déjà démontrée n'apporterait rien.
+        self._btn_confirm = QPushButton("✓ C'est bien une variante")
+        self._btn_reject = QPushButton("✗ Non, sans rapport")
+        self._btn_confirm.clicked.connect(lambda: self._record_verdict(True))
+        self._btn_reject.clicked.connect(lambda: self._record_verdict(False))
+        verdicts_ligne = QHBoxLayout()
+        verdicts_ligne.addWidget(self._btn_confirm)
+        verdicts_ligne.addWidget(self._btn_reject)
+        self._set_verdict_enabled(False)
+
         conteneur = QWidget()
         vertical = QVBoxLayout(conteneur)
         vertical.setContentsMargins(0, 0, 0, 0)
         vertical.addLayout(cote_a_cote, stretch=1)
         vertical.addWidget(self._explanation)
+        vertical.addLayout(verdicts_ligne)
         self._ui.pairLayout.addWidget(conteneur)
+
+    def _set_verdict_enabled(self, actif: bool) -> None:
+        for bouton in (self._btn_confirm, self._btn_reject):
+            bouton.setEnabled(actif)
+            bouton.setVisible(actif)
 
     def _build_parameters(self) -> None:
         """Panneau engendré depuis le catalogue de méthodes, groupé par étage."""
@@ -229,10 +260,26 @@ class DoublonsGUI(QMainWindow):
                  "type": "int",
                  "value": int(settings.value(_KEY_MAX_MPX, DEFAULT_MAX_MEGAPIXELS)),
                  "limits": (1, 1000), "step": 5},
+                {"name": "calcul", "title": "Calcul", "type": "group", "children": [
+                    {"name": "device", "title": "Appareil", "type": "list",
+                     "value": settings.value(_KEY_DEVICE, _device.DEVICE_AUTO),
+                     "limits": {_device.DEVICE_TITLES[d]: d
+                                for d in _device.DEVICE_ORDER}},
+                    {"name": "model", "title": "Modèle d'empreinte", "type": "list",
+                     "value": settings.value(_KEY_MODEL, _emb.DEFAULT_MODEL),
+                     "limits": {m.title: m.key for m in _emb.EMBEDDING_MODELS}},
+                    {"name": "sem_threshold", "title": "Seuil sémantique",
+                     "type": "float",
+                     "value": float(settings.value(_KEY_SEM_THRESHOLD,
+                                                   DEFAULT_SEMANTIC_THRESHOLD)),
+                     "limits": (0.0, 1.0), "step": 0.01},
+                ]},
             ],
         )
         for nom in ("top_k", "threshold", "max_mpx"):
             self._param_root.child(nom).sigValueChanged.connect(self._save_settings)
+        for nom in ("device", "model", "sem_threshold"):
+            self._param_root.child("calcul", nom).sigValueChanged.connect(self._save_settings)
         for m in METHODS:
             self._param_root.child(m.stage, m.key).sigValueChanged.connect(self._save_settings)
 
@@ -240,18 +287,25 @@ class DoublonsGUI(QMainWindow):
         arbre.setParameters(self._param_root)
 
         # Rappel visible : ce lot ne couvre pas les variantes redessinées.
-        avertissement = QLabel(
-            "<i>Détecte les mêmes dessins re-numérisés, republiés ou recadrés.<br>"
-            "Les <b>variantes redessinées</b> ne sont pas couvertes.</i>"
-        )
-        avertissement.setWordWrap(True)
-        avertissement.setStyleSheet("color:#A33A2E; padding:4px;")
+        self._avertissement = QLabel()
+        self._avertissement.setWordWrap(True)
+        self._avertissement.setStyleSheet("color:#A33A2E; padding:4px;")
+        self._refresh_warning()
+        for m in METHODS:
+            self._param_root.child(m.stage, m.key).sigValueChanged.connect(
+                self._refresh_warning
+            )
+        avertissement = self._avertissement
+
+        self._btn_compare = QPushButton("Comparer les modèles sur mes verdicts")
+        self._btn_compare.clicked.connect(self._compare_models)
 
         conteneur = QWidget()
         vertical = QVBoxLayout(conteneur)
         vertical.setContentsMargins(0, 0, 0, 0)
         vertical.addWidget(arbre)
         vertical.addWidget(avertissement)
+        vertical.addWidget(self._btn_compare)
         vertical.addStretch(1)
 
         dock = QDockWidget("Méthodes et seuils", self)
@@ -262,12 +316,63 @@ class DoublonsGUI(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
         self._param_dock = dock
 
+    def _refresh_warning(self) -> None:
+        """L'avertissement ne dit que ce qui est vrai à cet instant.
+
+        Tant que la méthode sémantique n'est pas cochée, les variantes
+        redessinées ne sont pas couvertes et il faut le dire.  Une fois cochée,
+        c'est la nature *présomptive* du résultat qu'il faut rappeler.
+        """
+        if self._param_root["verify", "semantic_variants"]:
+            self._avertissement.setText(
+                "<i>Les <b>variantes redessinées</b> reposent sur une simple "
+                "ressemblance de contenu : ce sont des <b>présomptions</b>, "
+                "à confirmer une par une à la revue.</i>"
+            )
+        else:
+            self._avertissement.setText(
+                "<i>Détecte les mêmes dessins re-numérisés, republiés ou "
+                "recadrés.<br>Les <b>variantes redessinées</b> ne sont pas "
+                "couvertes — cochez la méthode sémantique pour les chercher.</i>"
+            )
+
+    def _compare_models(self) -> None:
+        """Classe les modèles d'empreinte sur les verdicts déjà rendus.
+
+        C'est la réponse mesurée à une question que la littérature ne tranche
+        pas : DINOv2 ou CLIP sur des caricatures redessinées.  Sans empreintes
+        en cache pour plusieurs modèles, le banc d'essai le dit franchement
+        plutôt que de comparer ce qu'il n'a pas.
+        """
+        juges = list(_verdicts.load().values())
+        modeles = {}
+        for modele in _emb.EMBEDDING_MODELS:
+            vecteurs = _emb.load_cache(modele.key)
+            if vecteurs:
+                modeles[modele.key] = vecteurs
+        if not modeles:
+            QMessageBox.information(
+                self, "Comparaison impossible",
+                "Aucune empreinte en cache. Lancez une recherche avec la méthode "
+                "sémantique cochée, sur au moins deux modèles différents, avant "
+                "de les comparer.",
+            )
+            return
+        resultat = _benchmark.compare_models(juges, modeles)
+        QMessageBox.information(
+            self, "Comparaison des modèles",
+            _benchmark.format_comparison(resultat),
+        )
+
     def _save_settings(self) -> None:
         settings = app_settings()
         settings.setValue(_KEY_METHODS, list(self._selected_methods()))
         settings.setValue(_KEY_TOPK, self._param_root["top_k"])
         settings.setValue(_KEY_THRESHOLD, self._param_root["threshold"])
         settings.setValue(_KEY_MAX_MPX, self._param_root["max_mpx"])
+        settings.setValue(_KEY_DEVICE, self._param_root["calcul", "device"])
+        settings.setValue(_KEY_MODEL, self._param_root["calcul", "model"])
+        settings.setValue(_KEY_SEM_THRESHOLD, self._param_root["calcul", "sem_threshold"])
 
     def _selected_methods(self) -> tuple[str, ...]:
         """Clés cochées, dans l'ordre du catalogue (jamais celui du décochage)."""
@@ -311,18 +416,38 @@ class DoublonsGUI(QMainWindow):
             )
             return
 
+        options = {
+            "methods": methodes,
+            "recursive": bool(self._recursive),
+            "top_k": int(self._param_root["top_k"]),
+            "threshold": float(self._param_root["threshold"]),
+            "max_megapixels": float(self._param_root["max_mpx"]),
+            "semantic_threshold": float(self._param_root["calcul", "sem_threshold"]),
+            "embedding_model": self._param_root["calcul", "model"],
+        }
+        if "semantic_variants" in methodes and self._search_fn is None:
+            # L'extracteur n'est construit QUE si l'utilisateur a coché la
+            # méthode : sinon on téléchargerait des poids pour rien.
+            appareil, explication = _device.resolve(
+                self._param_root["calcul", "device"]
+            )
+            self.statusBar().showMessage(f"Calcul sur {explication}")
+            try:
+                options["embedder"] = _emb.build_embedder(
+                    options["embedding_model"], device=appareil
+                )
+            except Exception as exc:
+                QMessageBox.critical(
+                    self, "Modèle indisponible",
+                    f"Impossible de charger « {options['embedding_model']} » :\n{exc}\n\n"
+                    "La recherche continue sans les variantes redessinées.",
+                )
+                options["methods"] = tuple(
+                    k for k in methodes if k != "semantic_variants"
+                )
+
         self._set_busy(True, "Recherche en cours…")
-        worker = _SearchWorker(
-            self._target,
-            {
-                "methods": methodes,
-                "recursive": bool(self._recursive),
-                "top_k": int(self._param_root["top_k"]),
-                "threshold": float(self._param_root["threshold"]),
-                "max_megapixels": float(self._param_root["max_mpx"]),
-            },
-            search_fn=self._search_fn,
-        )
+        worker = _SearchWorker(self._target, options, search_fn=self._search_fn)
         worker.progress.connect(self._on_progress)
         worker.stage_changed.connect(lambda s: self.statusBar().showMessage(s))
         worker.result_ready.connect(self._on_found)
@@ -373,9 +498,22 @@ class DoublonsGUI(QMainWindow):
                 feuille.setData(0, Qt.ItemDataRole.UserRole, paire)
 
         if graph.uncertain:
-            racine = QTreeWidgetItem(arbre, [f"Incertaines ({len(graph.uncertain)})"])
+            # Nommée « possibles » et non « incertaines » : aucune transformation
+            # ne les relie, ce sont des présomptions à confirmer, pas des
+            # résultats douteux d'une mesure fiable.
+            racine = QTreeWidgetItem(
+                arbre, [f"Variantes possibles ({len(graph.uncertain)}) — à confirmer"]
+            )
+            racine.setExpanded(True)
             for paire in graph.uncertain:
-                feuille = QTreeWidgetItem(racine, [f"{paire.a.name} ? {paire.b.name}"])
+                deja = _verdicts.verdict_for(paire.a, paire.b)
+                marque = ""
+                if deja is not None:
+                    marque = "  ✓ confirmée" if deja.confirmed else "  ✗ rejetée"
+                feuille = QTreeWidgetItem(
+                    racine, [f"{paire.a.name} ≈ {paire.b.name}  "
+                             f"({paire.merit.merite:.2f}){marque}"]
+                )
                 feuille.setData(0, Qt.ItemDataRole.UserRole, paire)
 
     @pyqtSlot()
@@ -389,6 +527,29 @@ class DoublonsGUI(QMainWindow):
         self._preview_b.show_path(paire.b)
         self._explanation.setText(paire.merit.explain(paire.a.name, paire.b.name))
         self.current_image_changed.emit(paire.a)
+        self._current_pair = paire
+        # Les verdicts ne concernent que le régime sémantique : confirmer une
+        # paire dont la géométrie fait déjà la preuve n'apprendrait rien.
+        self._set_verdict_enabled(paire.merit.regime == REGIME_SEMANTIQUE)
+
+    def _record_verdict(self, confirme: bool) -> None:
+        """Enregistre le jugement humain et passe à la paire suivante."""
+        paire = getattr(self, "_current_pair", None)
+        if paire is None:
+            return
+        _verdicts.record(
+            paire.a, paire.b, confirme,
+            model=self._param_root["calcul", "model"],
+            cosine=float(paire.merit.cosinus_semantique or paire.merit.merite),
+        )
+        calibration = _verdicts.calibrate(
+            _verdicts.load().values(), model=self._param_root["calcul", "model"]
+        )
+        self.statusBar().showMessage(_verdicts.describe(calibration))
+        arbre = self._ui.treeGroups
+        suivant = arbre.itemBelow(arbre.currentItem()) if arbre.currentItem() else None
+        if suivant is not None:
+            arbre.setCurrentItem(suivant)
 
     # ------------------------------------------------------------------
     # Écriture et export

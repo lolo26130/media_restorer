@@ -41,6 +41,7 @@ Vérifier toutes les paires est hors de portée — mesuré 7,9 jours avec ORB s
 
 Soit environ **26 minutes** au lieu de 7,9 jours, pour un résultat identique.
 """
+from media_restorer.engines.duplicates.benchmark import compare_models, format_comparison
 from media_restorer.engines.duplicates.candidates import (
     DEFAULT_BLOCK,
     apply_prefilter,
@@ -48,6 +49,14 @@ from media_restorer.engines.duplicates.candidates import (
     top_k,
 )
 from media_restorer.engines.duplicates.descriptors import DESCRIPTORS, describe, load_tile
+from media_restorer.engines.duplicates.device import (
+    DEVICE_AUTO, DEVICE_CPU, DEVICE_GPU, DEVICE_ORDER, DEVICE_TITLES,
+    probe_gpu, resolve,
+)
+from media_restorer.engines.duplicates.embeddings import (
+    DEFAULT_MODEL, EMBEDDING_MODELS, EMBEDDING_MODELS_BY_KEY,
+    EmbeddingModel, build_embedder, embed_corpus,
+)
 from media_restorer.engines.duplicates.groups import (
     DuplicateGraph,
     Group,
@@ -77,10 +86,22 @@ from media_restorer.engines.duplicates.methods import (
     default_keys,
     methods_for,
 )
+from media_restorer.engines.duplicates.verdicts import (
+    MIN_VERDICTS, Verdict, calibrate, pair_key, record, verdict_for,
+)
 from media_restorer.engines.duplicates.verify import load_work, verify_pair, verify_paths
 
 __all__ = [
     "DEFAULT_BLOCK",
+    "DEFAULT_MODEL",
+    "DEVICE_AUTO",
+    "DEVICE_CPU",
+    "DEVICE_GPU",
+    "DEVICE_ORDER",
+    "DEVICE_TITLES",
+    "EMBEDDING_MODELS",
+    "EMBEDDING_MODELS_BY_KEY",
+    "MIN_VERDICTS",
     "DESCRIPTORS",
     "METHODS",
     "METHODS_BY_KEY",
@@ -95,8 +116,20 @@ __all__ = [
     "DuplicateGraph",
     "Group",
     "Merit",
+    "EmbeddingModel",
     "Method",
     "Pair",
+    "Verdict",
+    "build_embedder",
+    "calibrate",
+    "compare_models",
+    "embed_corpus",
+    "format_comparison",
+    "pair_key",
+    "probe_gpu",
+    "record",
+    "resolve",
+    "verdict_for",
     "apply_prefilter",
     "build_graph",
     "coverage",

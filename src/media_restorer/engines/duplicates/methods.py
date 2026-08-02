@@ -133,6 +133,19 @@ METHODS: tuple[Method, ...] = (
         default=False,
         cost="~150 ms/paire",
     ),
+    Method(
+        key="semantic_variants",
+        title="Variantes redessinées (empreinte sémantique)",
+        stage=STAGE_VERIFY,
+        description=(
+            "Rattrape les paires que la géométrie rejette : même sujet, tracé "
+            "différent. AUCUNE transformation ne relie les deux images, le "
+            "résultat est donc une présomption et non une preuve — à confirmer "
+            "à la revue. Télécharge des poids au premier usage."
+        ),
+        default=False,
+        cost="3,5 à 11 min pour tout le corpus (une fois, puis mis en cache)",
+    ),
 )
 
 METHODS_BY_KEY = {m.key: m for m in METHODS}

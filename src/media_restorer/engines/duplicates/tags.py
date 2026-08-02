@@ -35,6 +35,9 @@ owns = _tags.branch_owner(BRANCH)
 
 LEAF_REPRESENTATIVE = "Représentant"
 LEAF_INCLUDED = "Inclus dans un autre"
+#: Réservée aux variantes CONFIRMÉES à la revue.  Une présomption non
+#: validée n'a rien à faire dans les métadonnées d'un fonds patrimonial.
+LEAF_VARIANT = "Variante"
 
 ProgressCallback = Callable[[int, int], None]
 
@@ -49,13 +52,15 @@ def group_label(index: int) -> str:
 
 
 def tag_paths_for(label: str, *, representative: bool = False,
-                  included: bool = False) -> list[list[str]]:
+                  included: bool = False, variant: bool = False) -> list[list[str]]:
     """Chemins d'étiquettes d'une image, selon son rôle dans le graphe."""
     chemins = [[_tags.ROOT, BRANCH, label]]
     if representative:
         chemins.append([_tags.ROOT, BRANCH, LEAF_REPRESENTATIVE])
     if included:
         chemins.append([_tags.ROOT, BRANCH, LEAF_INCLUDED])
+    if variant:
+        chemins.append([_tags.ROOT, BRANCH, LEAF_VARIANT])
     return chemins
 
 
@@ -90,6 +95,23 @@ def write_graph(
     return ecrites, echecs
 
 
+def confirmed_variants(graph: DuplicateGraph) -> set[Path]:
+    """Images des variantes **confirmées à la revue**, et d'elles seules.
+
+    Une variante simplement proposée par le modèle n'est pas étiquetée : elle
+    n'est qu'une présomption, et l'écrire dans le fichier lui donnerait une
+    autorité qu'elle n'a pas.
+    """
+    from media_restorer.engines.duplicates import verdicts as _verdicts
+
+    confirmees: set[Path] = set()
+    for paire in graph.uncertain:
+        verdict = _verdicts.verdict_for(paire.a, paire.b)
+        if verdict is not None and verdict.confirmed:
+            confirmees.update((paire.a, paire.b))
+    return confirmees
+
+
 def _plan(graph: DuplicateGraph) -> Iterable[tuple[Path, list[list[str]]]]:
     """Une entrée par image à étiqueter, étiquettes déjà résolues.
 
@@ -115,6 +137,10 @@ def _plan(graph: DuplicateGraph) -> Iterable[tuple[Path, list[list[str]]]]:
     for chemin in incluses:
         par_image.setdefault(chemin, []).append(
             [_tags.ROOT, BRANCH, LEAF_INCLUDED]
+        )
+    for chemin in confirmed_variants(graph):
+        par_image.setdefault(chemin, []).append(
+            [_tags.ROOT, BRANCH, LEAF_VARIANT]
         )
     return par_image.items()
 

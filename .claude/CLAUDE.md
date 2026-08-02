@@ -172,7 +172,37 @@ Architecture
                     les paires en régime SÉMANTIQUE (sans famille D, ce ne sont
                     que des candidats rejetés — les remonter ferait 32 « paires
                     incertaines » sur 36, mesuré). tags.py : branche
-                    media_restorer/Doublons/, owns RESTREINT
+                    media_restorer/Doublons/, owns RESTREINT.
+                    — v2 (variantes redessinées, R3) —
+                    device.py : DEVICE_AUTO/CPU/GPU. ⚠ LA SONDE GPU S'EXÉCUTE EN
+                    SOUS-PROCESSUS, jamais en thread : un pilote bloqué n'est PAS
+                    interruptible depuis le processus appelant (ni Ctrl-C ni
+                    join(timeout)) — c'est ce qui avait figé l'app avec OWLv2. Un
+                    sous-processus se tue. RÈGLE À SUIVRE POUR TOUTE SONDE
+                    MATÉRIELLE FUTURE. HSA_OVERRIDE_GFX_VERSION=11.0.0 posé
+                    automatiquement (11.0.2 fige la machine). Mesuré : GPU OK
+                    (matmul 4,6×, conv2d OK, ViT 2,2-2,5×) — donc CONFORT, pas
+                    prérequis (ViT-B sur Cabrol : 11,4 min CPU / 4,6 min GPU).
+                    embeddings.py : catalogue EMBEDDING_MODELS (DINOv2 S/B, CLIP,
+                    SigLIP) — transformers 4.57.6 les fournit tous, AUCUNE
+                    dépendance nouvelle. Cache invalidé par (taille, mtime) ET
+                    CLÉ DE MODÈLE : l'oublier ferait comparer des vecteurs DINOv2
+                    à des CLIP, silencieusement. Le rappel on_progress fait
+                    partie du CONTRAT (pas d'introspection par except TypeError).
+                    verdicts.py : LA BOUCLE QUI FAIT PROGRESSER L'OUTIL. Le seuil
+                    sémantique NE PEUT PAS être fixé a priori (v1 : 32 paires
+                    « incertaines » sur 36) — il vient des verdicts rendus à la
+                    revue. Clé de paire = chemins TRIÉS puis hachés (symétrique,
+                    survit à un reclassement). calibrate() optimise le F1 et
+                    REFUSE de parler sous MIN_VERDICTS=10.
+                    benchmark.py : compare les modèles sur LE MÊME jeu de
+                    verdicts — répond par la mesure à ce que la littérature ne
+                    tranche pas (DINOv2 devant CLIP, mais sur des PHOTOS).
+                    SSCD volontairement absent : entraîné sur des COPIES
+                    transformées, inutile pour un redessin.
+                    tags.py : feuille « Variante » réservée aux paires
+                    CONFIRMÉES — une présomption non validée n'a rien à faire
+                    dans les métadonnées d'un fonds patrimonial
   - engines/face_id/ → cœur de auto_face_id_register, sans Qt, ne dérive PAS de
                     BaseEngine. detect.py : détection ZERO-SHOT (vocabulaire
                     ouvert) pilotée par la liste de repères = requêtes texte
