@@ -11,6 +11,7 @@ import pytest
 from PyQt6.QtWidgets import QMessageBox
 
 import media_restorer.extensions.pre_classement  # noqa: F401 — enregistre l'extension
+from media_restorer import tabular
 from media_restorer.engines.triage import CRITERIA, ImageSignals, ScanResult
 from media_restorer.extensions.pre_classement.gui import (
     PreClassementGUI,
@@ -318,7 +319,7 @@ def test_csv_export_writes_a_row_per_image(qtbot, tmp_path, monkeypatch):
     win.on_actionExportCsv_triggered()
 
     lignes = cible.read_text(encoding="utf-8").strip().splitlines()
-    assert lignes[0].startswith("fichier,Orientation")
+    assert lignes[0].split(tabular.DELIMITER)[:2] == ["fichier", "Orientation"]
     assert len(lignes) == 3                        # en-tête + deux images
     assert "Paysage" in lignes[1]
 

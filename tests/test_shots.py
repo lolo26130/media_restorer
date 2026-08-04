@@ -29,6 +29,7 @@ from media_restorer.engines.shots import (
     time_key,
 )
 from media_restorer.engines.shots import preview as _preview
+from media_restorer.engines.shots import sidecars
 
 
 def _meta(path, **champs):
@@ -318,3 +319,79 @@ def test_cached_preview_name_changes_when_the_file_changes(tmp_path):
     apres = _preview.cached_path(fichier)
 
     assert avant != apres
+
+
+# ---------------------------------------------------------------------------
+# Développé ou jamais développé — l'annexe de développement
+# ---------------------------------------------------------------------------
+
+def test_the_sidecar_is_named_after_the_full_raw_name(tmp_path):
+    """Convention relevée sur le corpus : ``DSC_1.NEF.xmp``, jamais ``DSC_1.xmp``.
+
+    1 050 des 1 877 NEF portent la première forme, aucun la seconde.  Se
+    tromper de convention rendrait « jamais développé » pour tout le corpus,
+    sans la moindre erreur.
+    """
+    candidats = sidecars.sidecar_candidates(tmp_path / "DSC_1.NEF")
+
+    assert "dsc_1.nef.xmp" in candidats
+    assert "dsc_1.xmp" not in candidats
+
+
+def test_a_raw_is_developed_when_a_sidecar_sits_beside_it(tmp_path):
+    brut, = _touch(tmp_path, "a.nef")
+    _touch(tmp_path, "a.nef.xmp")
+    autre, = _touch(tmp_path, "b.nef")
+
+    assert sidecars.is_developed(brut) is True
+    assert sidecars.is_developed(autre) is False
+
+
+def test_a_sidecar_in_another_folder_does_not_count(tmp_path):
+    """L'annexe appartient au RAW qu'elle jouxte, pas à son homonyme ailleurs."""
+    brut, = _touch(tmp_path, "330ND800/DSC_6769.nef")
+    _touch(tmp_path, "329ND800/DSC_6769.nef.xmp")
+
+    index = sidecars.index_sidecars(sidecars.iter_sidecars(tmp_path))
+    assert sidecars.is_developed(brut, index) is False
+
+
+def test_sidecar_case_is_ignored(tmp_path):
+    """La casse est mêlée dans le corpus : ``.XMP`` accompagne aussi ``.NEF``."""
+    brut, = _touch(tmp_path, "A.NEF")
+    _touch(tmp_path, "A.NEF.XMP")
+
+    assert sidecars.is_developed(brut) is True
+    index = sidecars.index_sidecars(sidecars.iter_sidecars(tmp_path))
+    assert sidecars.is_developed(brut, index) is True
+
+
+def test_the_scan_splits_orphan_raws_by_development(tmp_path):
+    """La distinction demandée : reste-t-il tout à faire, ou juste à exporter ?"""
+    fait, a_faire = _touch(tmp_path, "fait.nef", "a_faire.nef")
+    _touch(tmp_path, "fait.nef.pp3")
+    runner = _runner([
+        _meta(fait, SerialNumber="1", ShutterCount="10"),
+        _meta(a_faire, SerialNumber="1", ShutterCount="20"),
+    ])
+
+    inv = scan_shots(tmp_path, runner=runner)
+
+    assert sorted(inv.raw_only) == sorted([fait, a_faire])
+    assert inv.raw_only_developed == [fait]
+    assert inv.raw_only_never_developed == [a_faire]
+    # Les deux sous-ensembles partitionnent raw_only — aucune perte, aucun doublon.
+    assert sorted(inv.raw_only_developed + inv.raw_only_never_developed) == sorted(inv.raw_only)
+
+
+def test_a_paired_raw_carries_its_development_status(tmp_path):
+    """Le JPEG existe déjà ; savoir s'il vient d'un développement reste utile."""
+    brut, jpeg = _touch(tmp_path, "p.nef", "p.jpg")
+    _touch(tmp_path, "p.nef.xmp")
+    runner = _runner([
+        _meta(brut, SerialNumber="1", ShutterCount="10"),
+        _meta(jpeg, SerialNumber="1", ShutterCount="10"),
+    ])
+
+    (paire,) = scan_shots(tmp_path, runner=runner).pairs
+    assert paire.developed is True

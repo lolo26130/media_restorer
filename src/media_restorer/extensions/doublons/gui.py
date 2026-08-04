@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from media_restorer import tabular
 from media_restorer.app_settings import TOOLTIP_MODE_KEY, app_settings
 from media_restorer.digikam_tags import ExiftoolRunner
 from media_restorer.engines.duplicates import (
@@ -49,7 +50,11 @@ from media_restorer.engines.duplicates import pipeline as _pipeline
 from media_restorer.engines.duplicates import verdicts as _verdicts
 from media_restorer.engines.duplicates import report as _report
 from media_restorer.engines.duplicates import tags as _dup_tags
-from media_restorer.gui_widgets import ImagePreview
+from media_restorer.gui_widgets import (
+    ImagePreview,
+    restore_layout,
+    save_layout,
+)
 from OutilsQt.Utils_Qt import compile_qrc, compile_ui, tooltips_from_code
 
 _UI_SRC = Path(__file__).parent / "views" / "main.ui"
@@ -58,6 +63,10 @@ _QRC_SRC = Path(__file__).parents[2] / "resources" / "icons" / "media_restorer.q
 _QRC_PY = Path(__file__).parents[2] / "resources" / "icons" / "media_restorer_rc.py"
 
 _TOOLTIP_TYPES: list[tuple] = [(QAction, "action", "triggered")]
+
+#: Préfixe QSettings de la disposition (voir gui_widgets.save_layout).
+#: Les deux aperçus côte à côte gardent la place qu'on leur a faite.
+_LAYOUT_PREFIX = "doublons"
 
 _SETTINGS_PREFIX = "doublons/"
 _KEY_METHODS = _SETTINGS_PREFIX + "methods"
@@ -181,6 +190,7 @@ class DoublonsGUI(QMainWindow):
         )
         self._ui.treeGroups.itemSelectionChanged.connect(self._on_selection)
         self._apply_target(target_path)
+        restore_layout(self, _LAYOUT_PREFIX)
 
     # ------------------------------------------------------------------
     # Construction
@@ -309,6 +319,7 @@ class DoublonsGUI(QMainWindow):
         vertical.addStretch(1)
 
         dock = QDockWidget("Méthodes et seuils", self)
+        dock.setObjectName("dockMethodes")  # sans objectName, restoreState ignore le dock
         dock.setAllowedAreas(
             Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
         )
@@ -618,7 +629,7 @@ class DoublonsGUI(QMainWindow):
         if self._graph is None:
             return
         chemin, _ = QFileDialog.getSaveFileName(
-            self, "Exporter le rapport", "doublons.csv", "CSV (*.csv)"
+            self, "Exporter le rapport", "doublons.csv", tabular.FILE_FILTER
         )
         if not chemin:
             return
@@ -656,3 +667,12 @@ class DoublonsGUI(QMainWindow):
         self._worker = None
         self._set_busy(False, "Échec de la recherche.")
         QMessageBox.critical(self, "Erreur — recherche de doublons", message)
+
+    def closeEvent(self, event) -> None:      # noqa: N802 — API Qt
+        """Mémorise la disposition des docks avant de fermer.
+
+        Seul chemin par lequel passe toute fermeture de la fenêtre : y placer
+        l'enregistrement garantit qu'aucune sortie ne l'oublie.
+        """
+        save_layout(self, _LAYOUT_PREFIX)
+        super().closeEvent(event)

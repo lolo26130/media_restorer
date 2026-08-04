@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Mapping, Sequence
 
 from media_restorer.engines.shots import keys as _keys
+from media_restorer.engines.shots import sidecars as _sidecars
 from media_restorer.engines.shots.keys import (
     EXIF_FIELDS,
     MATCH_NAME,
@@ -75,6 +76,7 @@ class ShotPair:
     derived: Path
     method: str
     meta: dict = field(default_factory=dict)
+    developed: bool = False
 
     @property
     def reliable(self) -> bool:
@@ -104,6 +106,28 @@ class ShotInventory:
     raw_only: list[Path]
     jpeg_only: list[Path]
     unconfirmed: list[ShotPair]
+    #: RAW accompagnés d'un fichier annexe de développement.  Sous-ensemble de
+    #: tous les RAW rencontrés — voir :mod:`~media_restorer.engines.shots.sidecars`.
+    developed: frozenset = frozenset()
+
+    def is_developed(self, raw: Path) -> bool:
+        """*raw* a-t-il déjà été développé ?"""
+        return raw in self.developed
+
+    @property
+    def raw_only_never_developed(self) -> list[Path]:
+        """RAW sans JPEG **et** jamais développés — tout reste à faire."""
+        return [p for p in self.raw_only if p not in self.developed]
+
+    @property
+    def raw_only_developed(self) -> list[Path]:
+        """RAW sans JPEG mais **déjà développés**.
+
+        Le dérivé a existé puis a été déplacé, renommé ou supprimé : c'est un
+        problème de rangement, non de traitement — l'action à mener n'est pas
+        la même.
+        """
+        return [p for p in self.raw_only if p in self.developed]
 
     @property
     def n_raw(self) -> int:
@@ -120,7 +144,12 @@ class ShotInventory:
         morceaux = [f"{self.n_raw} RAW", f"{self.n_derived} JPEG",
                     f"{part:.1f} % appariés"]
         if self.raw_only:
-            morceaux.append(f"{len(self.raw_only)} RAW sans JPEG")
+            jamais = len(self.raw_only_never_developed)
+            deja = len(self.raw_only) - jamais
+            detail = f"{len(self.raw_only)} RAW sans JPEG"
+            if deja:
+                detail += f" (dont {deja} déjà développé{'s' if deja > 1 else ''})"
+            morceaux.append(detail)
         if self.unconfirmed:
             morceaux.append(f"{len(self.unconfirmed)} à confirmer")
         return " · ".join(morceaux)
@@ -201,6 +230,9 @@ def scan_shots(
     part dans ``unconfirmed``, jamais dans ``pairs``.
     """
     raws, derives = iter_files(root, recursive=recursive)
+    # Index des fichiers annexes : un seul parcours, puis des tests gratuits.
+    annexes = _sidecars.index_sidecars(_sidecars.iter_sidecars(root, recursive=recursive))
+    developpes = frozenset(r for r in raws if _sidecars.is_developed(r, annexes))
     _annonce(on_stage, f"Lecture des métadonnées de {len(raws) + len(derives)} fichiers…")
 
     meta = read_metadata([*raws, *derives], runner, on_progress=on_progress)
@@ -226,7 +258,8 @@ def scan_shots(
                          if not contradicts(infos, meta.get(c, {}))]
             if candidats:
                 apparie = ShotPair(raw=brut, derived=candidats[0],
-                                   method=match_method(cle), meta=dict(infos))
+                                   method=match_method(cle), meta=dict(infos),
+                                   developed=brut in developpes)
                 break
         if apparie is None:
             raw_only.append(brut)
@@ -235,8 +268,8 @@ def scan_shots(
         (pairs if apparie.reliable else unconfirmed).append(apparie)
 
     jpeg_only = [p for p in derives if p not in utilises]
-    return ShotInventory(pairs=pairs, raw_only=raw_only,
-                         jpeg_only=jpeg_only, unconfirmed=unconfirmed)
+    return ShotInventory(pairs=pairs, raw_only=raw_only, jpeg_only=jpeg_only,
+                         unconfirmed=unconfirmed, developed=developpes)
 
 
 def contradicts(a: Mapping[str, object], b: Mapping[str, object]) -> bool:

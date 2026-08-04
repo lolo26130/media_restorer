@@ -27,7 +27,13 @@ from PyQt6.QtCore import Qt, QUrl, pyqtSlot
 
 from media_restorer.app_settings import SKIN_KEY, TOOLTIP_MODE_KEY, app_settings
 from media_restorer.gui_shots import ShotInventoryPanel
-from media_restorer.gui_widgets import ImagePreview, InfoExifPanel
+from media_restorer.gui_widgets import (
+    ImagePreview,
+    InfoExifPanel,
+    apply_default_dock_width,
+    restore_layout,
+    save_layout,
+)
 from media_restorer.extensions import Extension, ExtensionContext, all_extensions
 from media_restorer.theme import THEME_SYSTEM, apply_theme
 from OutilsQt.Utils_Qt import compile_ui, compile_qrc, tooltips_from_code
@@ -42,6 +48,12 @@ _QRC_PY  = Path(__file__).parent / "resources" / "icons" / "media_restorer_rc.py
 _REPO_ROOT = Path(__file__).parents[2]
 _DOCS_SOURCE = _REPO_ROOT / "docs" / "source"
 _DOCS_HTML   = _REPO_ROOT / "docs" / "build" / "html"
+
+# Préfixe des clés QSettings de la disposition.  saveState() sérialise taille,
+# position, empilement et onglet actif de TOUS les docks d'un coup : c'est le
+# mécanisme prévu par Qt, préférable à retenir chaque dock à la main
+# (voir media_restorer.gui_widgets.save_layout).
+_LAYOUT_PREFIX = "root"
 
 _TOOLTIP_TYPES: list[tuple] = [
     (QAction, "action", "triggered"),
@@ -131,6 +143,12 @@ class ImageTreatmentWindow(QMainWindow):
         # documenté dans media_restorer.extensions.
         self._info_panel = InfoExifPanel()
         self._info_dock = QDockWidget("Infos, Exif", self)
+        # ⚠ Un dock SANS objectName est PUREMENT ET SIMPLEMENT IGNORÉ par
+        # saveState/restoreState (Qt le signale sur la sortie d'erreur, puis
+        # continue) : sans ces trois lignes, la mémorisation de la disposition
+        # ne mémoriserait rien.  Le nom doit rester STABLE d'une version à
+        # l'autre — c'est la clé qui relie un état enregistré à son dock.
+        self._info_dock.setObjectName("dockInfoExif")
         self._info_dock.setAllowedAreas(
             Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
         )
@@ -145,6 +163,7 @@ class ImageTreatmentWindow(QMainWindow):
         # il suit l'image en cours via ``current_image_changed``.
         self._preview_panel = ImagePreview()
         self._preview_dock = QDockWidget("Aperçu", self)
+        self._preview_dock.setObjectName("dockApercu")      # voir _info_dock
         self._preview_dock.setAllowedAreas(
             Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
         )
@@ -161,6 +180,7 @@ class ImageTreatmentWindow(QMainWindow):
         # fichiers, et se déclenche par un bouton du panneau.
         self._shots_panel = ShotInventoryPanel()
         self._shots_dock = QDockWidget("Correspondances RAW", self)
+        self._shots_dock.setObjectName("dockCorrespondancesRaw")   # voir _info_dock
         self._shots_dock.setAllowedAreas(
             Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
         )
@@ -169,6 +189,12 @@ class ImageTreatmentWindow(QMainWindow):
         self.tabifyDockWidget(self._info_dock, self._shots_dock)
         self._info_dock.raise_()          # « Infos, Exif » reste l'onglet visible
         self._shots_panel.current_image_changed.connect(self._on_extension_image)
+
+        # restoreState en dernier : il remplace l'empilement et l'onglet
+        # choisis juste au-dessus par ceux de la dernière session.
+        # Rien de mémorisé ⇒ disposition par défaut, posée au premier
+        # affichage (voir showEvent) et non ici.
+        self._needs_default_layout = not restore_layout(self, _LAYOUT_PREFIX)
 
     # ------------------------------------------------------------------
     # Tooltips
@@ -347,13 +373,30 @@ class ImageTreatmentWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(index)))
         self.statusBar().showMessage(f"Documentation ouverte : {index}")
 
-    def closeEvent(self, event) -> None:
-        """Ferme aussi les fenêtres d'extension ouvertes depuis la racine.
+    def showEvent(self, event) -> None:      # noqa: N802 — API Qt
+        """Pose la disposition par défaut au tout premier affichage.
 
-        Sans cela, fermer la fenêtre racine laisserait les outils lancés
-        orphelins — potentiellement surprenant si l'utilisateur perçoit la
-        racine comme le point d'entrée de toute la session de travail.
+        Et non dans ``__init__`` : avant ``show()``, ``QMainWindow`` n'a pas
+        encore arbitré ses zones, et la largeur demandée pour l'aperçu y était
+        rabotée (241 px au lieu de 460, mesuré).  Le drapeau garantit qu'un
+        simple masquer/réafficher ne réécrase pas un réglage de l'utilisateur.
         """
+        super().showEvent(event)
+        if self._needs_default_layout:
+            self._needs_default_layout = False
+            apply_default_dock_width(self, self._preview_dock)
+
+    def closeEvent(self, event) -> None:
+        """Mémorise la disposition, puis ferme les fenêtres d'extension ouvertes.
+
+        Sans la fermeture en cascade, quitter la racine laisserait les outils
+        lancés orphelins — surprenant si l'utilisateur perçoit la racine comme
+        le point d'entrée de toute la session.
+
+        La disposition est enregistrée **ici et nulle part ailleurs** : c'est le
+        seul endroit par lequel passe toute fermeture de la fenêtre.
+        """
+        save_layout(self, _LAYOUT_PREFIX)
         for window in list(self._open_windows):
             window.close()
         super().closeEvent(event)

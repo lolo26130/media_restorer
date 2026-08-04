@@ -8,6 +8,7 @@ from media_restorer.app_settings import SKIN_KEY, TOOLTIP_MODE_KEY, app_settings
 from media_restorer.extensions import ExtensionContext
 from media_restorer.gui_root import ImageTreatmentWindow
 from media_restorer.theme import THEME_DARK, THEME_LIGHT, THEME_SYSTEM, THEMES
+from media_restorer import tabular
 
 
 @pytest.fixture
@@ -536,5 +537,9 @@ def test_shots_export_writes_every_category(qtbot, tmp_path, monkeypatch):
     panneau._export_csv()
 
     lignes = cible.read_text(encoding="utf-8").strip().splitlines()
-    assert lignes[0] == "categorie,raw,jpeg,methode,appareil"
+    # Séparateur TABULÉ (media_restorer.tabular) : un chemin peut contenir
+    # une virgule, jamais une tabulation.
+    assert lignes[0].split(tabular.DELIMITER) == [
+        "categorie", "raw", "jpeg", "methode", "appareil", "developpe"
+    ]
     assert len(lignes) == 5                       # en-tête + les quatre catégories

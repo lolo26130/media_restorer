@@ -12,7 +12,6 @@ catalogue le fait apparaître ici sans qu'une ligne de ce module change.
 """
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -30,6 +29,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from media_restorer import tabular
 from media_restorer.app_settings import TOOLTIP_MODE_KEY, app_settings
 from media_restorer.digikam_tags import ExiftoolRunner
 from media_restorer.engines.triage import (
@@ -45,7 +45,12 @@ from media_restorer.engines.triage import (
     summarise,
 )
 from media_restorer.engines.triage import tags as triage_tags
-from media_restorer.gui_widgets import ImagePreview
+from media_restorer.gui_widgets import (
+    ImagePreview,
+    apply_default_dock_width,
+    restore_layout,
+    save_layout,
+)
 from OutilsQt.Utils_Qt import compile_qrc, compile_ui, tooltips_from_code
 
 _UI_SRC = Path(__file__).parent / "views" / "main.ui"
@@ -54,6 +59,10 @@ _QRC_SRC = Path(__file__).parents[2] / "resources" / "icons" / "media_restorer.q
 _QRC_PY = Path(__file__).parents[2] / "resources" / "icons" / "media_restorer_rc.py"
 
 _TOOLTIP_TYPES: list[tuple] = [(QAction, "action", "triggered")]
+
+#: Préfixe QSettings de la disposition — l'aperçu retrouve la taille qu'on
+#: lui a donnée, au lieu de renaître minuscule à chaque ouverture.
+_LAYOUT_PREFIX = "pre_classement"
 
 # Clés QSettings — préfixées pour ne pas se mêler à celles des autres outils.
 _SETTINGS_PREFIX = "pre_classement/"
@@ -222,6 +231,9 @@ class PreClassementGUI(QMainWindow):
         self._build_parameters()
         self._build_preview_dock()
         self._build_summary_dock()
+        # Rien de mémorisé ⇒ disposition par défaut, posée au premier
+        # affichage (voir showEvent) et non ici.
+        self._needs_default_layout = not restore_layout(self, _LAYOUT_PREFIX)
 
         tooltips_from_code(
             self, mode=app_settings().value(TOOLTIP_MODE_KEY, "docstrings"),
@@ -295,6 +307,7 @@ class PreClassementGUI(QMainWindow):
         """
         self._preview = ImagePreview()
         dock = QDockWidget("Aperçu", self)
+        dock.setObjectName("dockApercu")  # sans objectName, restoreState ignore le dock
         dock.setAllowedAreas(
             Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
         )
@@ -356,6 +369,7 @@ class PreClassementGUI(QMainWindow):
         layout.addStretch(1)
 
         dock = QDockWidget("Paramètres et synthèse", self)
+        dock.setObjectName("dockParametres")  # sans objectName, restoreState ignore le dock
         dock.setAllowedAreas(
             Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
         )
@@ -540,13 +554,13 @@ class PreClassementGUI(QMainWindow):
         if self._result is None:
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "Exporter le classement", "classement.csv", "CSV (*.csv)"
+            self, "Exporter le classement", "classement.csv", tabular.FILE_FILTER
         )
         if not path:
             return
         try:
             with open(path, "w", newline="", encoding="utf-8") as f:
-                writer = csv.writer(f)
+                writer = tabular.writer(f)
                 writer.writerow(["fichier", *(c.title for c in self._criteria)])
                 for signals in self._result.signals:
                     writer.writerow([
@@ -587,3 +601,25 @@ class PreClassementGUI(QMainWindow):
         self._worker = None
         self._set_busy(False, "Échec du classement.")
         QMessageBox.critical(self, "Erreur — classement", message)
+
+    def showEvent(self, event) -> None:      # noqa: N802 — API Qt
+        """Pose la disposition par défaut au tout premier affichage.
+
+        Et non dans ``__init__`` : avant ``show()``, ``QMainWindow`` n'a pas
+        encore arbitré ses zones, et la largeur demandée pour l'aperçu y était
+        rabotée (241 px au lieu de 460, mesuré).  Le drapeau garantit qu'un
+        simple masquer/réafficher ne réécrase pas un réglage de l'utilisateur.
+        """
+        super().showEvent(event)
+        if self._needs_default_layout:
+            self._needs_default_layout = False
+            apply_default_dock_width(self, self._preview_dock)
+
+    def closeEvent(self, event) -> None:      # noqa: N802 — API Qt
+        """Mémorise la disposition des docks avant de fermer.
+
+        Seul chemin par lequel passe toute fermeture de la fenêtre : y placer
+        l'enregistrement garantit qu'aucune sortie ne l'oublie.
+        """
+        save_layout(self, _LAYOUT_PREFIX)
+        super().closeEvent(event)

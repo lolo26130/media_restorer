@@ -19,11 +19,10 @@ ce panneau connaît le cœur ``engines.shots``, là où les widgets de
 """
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 from typing import Callable
 
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QByteArray, Qt, QThread, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
@@ -41,7 +40,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from media_restorer import tabular
+from media_restorer.app_settings import app_settings
 from media_restorer.gui_widgets import ImagePreview
+
+#: Clé QSettings de la répartition gauche/droite du séparateur.
+_SPLITTER_KEY = "shots/splitter"
 
 #: Signature de la fonction d'inventaire (injectable pour les tests).
 ScanFn = Callable[..., object]
@@ -100,7 +104,7 @@ class ShotInventoryPanel(QWidget):
     #: (clé d'attribut, titre, en-têtes de colonnes)
     _TABS = (
         ("pairs", "Paires", ("RAW", "JPEG")),
-        ("raw_only", "RAW sans JPEG", ("RAW",)),
+        ("raw_only", "RAW sans JPEG", ("RAW", "Développé ?")),
         ("jpeg_only", "JPEG sans RAW", ("JPEG",)),
         ("unconfirmed", "⚠ À confirmer", ("RAW", "JPEG")),
     )
@@ -164,6 +168,18 @@ class ShotInventoryPanel(QWidget):
         separateur.addWidget(droite)
         separateur.setStretchFactor(0, 3)
         separateur.setStretchFactor(1, 2)
+        # Ce panneau vit DANS un dock : la répartition gauche/droite du
+        # séparateur n'est pas couverte par le ``saveState`` de la fenêtre
+        # racine (qui ne connaît que les docks).  Elle se mémorise donc ici,
+        # à chaque déplacement de la poignée — sans quoi l'aperçu reprendrait
+        # sa part par défaut à chaque lancement.
+        etat = app_settings().value(_SPLITTER_KEY)
+        if isinstance(etat, QByteArray) and not etat.isEmpty():
+            separateur.restoreState(etat)
+        separateur.splitterMoved.connect(
+            lambda *_: app_settings().setValue(_SPLITTER_KEY, separateur.saveState())
+        )
+        self._splitter = separateur
 
         principal = QVBoxLayout(self)
         principal.setContentsMargins(4, 4, 4, 4)
@@ -219,7 +235,16 @@ class ShotInventoryPanel(QWidget):
             arbre.clear()
             for entree in entrees:
                 if isinstance(entree, Path):
-                    item = QTreeWidgetItem(arbre, [entree.name])
+                    # Pour un RAW orphelin, la seconde colonne dit s'il a déjà
+                    # été développé : « déjà développé » signifie que le JPEG a
+                    # existé puis a été égaré — l'action à mener diffère.
+                    if cle == "raw_only":
+                        deja = inventaire.is_developed(entree)
+                        colonnes = [entree.name,
+                                    "✓ développé" if deja else "— jamais développé"]
+                    else:
+                        colonnes = [entree.name]
+                    item = QTreeWidgetItem(arbre, colonnes)
                     item.setData(0, Qt.ItemDataRole.UserRole, entree)
                     item.setData(1, Qt.ItemDataRole.UserRole, None)
                 else:
@@ -292,24 +317,30 @@ class ShotInventoryPanel(QWidget):
         if self._inventory is None:
             return
         chemin, _ = QFileDialog.getSaveFileName(
-            self, "Exporter l'inventaire", "correspondances_raw.csv", "CSV (*.csv)"
+            self, "Exporter l'inventaire", "correspondances_raw.csv",
+            tabular.FILE_FILTER
         )
         if not chemin:
             return
         try:
             with open(chemin, "w", newline="", encoding="utf-8") as f:
-                writer = csv.writer(f)
-                writer.writerow(["categorie", "raw", "jpeg", "methode", "appareil"])
+                writer = tabular.writer(f)
+                writer.writerow(["categorie", "raw", "jpeg", "methode",
+                                 "appareil", "developpe"])
                 for cle, titre, _c in self._TABS:
                     for entree in getattr(self._inventory, cle):
                         if isinstance(entree, Path):
                             est_raw = cle == "raw_only"
+                            developpe = ("oui" if self._inventory.is_developed(entree)
+                                         else "non") if est_raw else ""
                             writer.writerow([titre, str(entree) if est_raw else "",
-                                             "" if est_raw else str(entree), "", ""])
+                                             "" if est_raw else str(entree), "", "",
+                                             developpe])
                         else:
                             writer.writerow([titre, str(entree.raw), str(entree.derived),
                                              entree.method,
-                                             entree.meta.get("Model", "")])
+                                             entree.meta.get("Model", ""),
+                                             "oui" if entree.developed else "non"])
         except OSError as exc:
             QMessageBox.critical(self, "Erreur — export", str(exc))
             return

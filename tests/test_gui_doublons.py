@@ -22,6 +22,7 @@ from media_restorer.engines.duplicates import (
     Pair,
     build_graph,
 )
+from media_restorer import tabular
 from media_restorer.extensions.doublons.gui import (
     DoublonsGUI,
     _SearchWorker,
@@ -302,7 +303,9 @@ def test_export_writes_both_csv_and_html(qtbot, tmp_path, monkeypatch):
     assert cible.exists()
     assert cible.with_suffix(".html").exists()
     entete = cible.read_text(encoding="utf-8").splitlines()[0]
-    assert entete.startswith("image_a,image_b,regime,merite")
+    assert entete.split(tabular.DELIMITER)[:4] == [
+        "image_a", "image_b", "regime", "merite"
+    ]
     # Le HTML doit rester lisible s'il est déplacé : vignettes incorporées.
     assert "<html" in cible.with_suffix(".html").read_text(encoding="utf-8")
 

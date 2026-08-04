@@ -72,7 +72,11 @@ Architecture
                     A — rotation 15°, couverture 25 % ») qui se vérifie d'un
                     coup d'œil, là où « score 0,83 » ne se vérifie pas.
                     Non destructif : étiquettes + export CSV/HTML, JAMAIS de
-                    déplacement ni de suppression (fonds patrimonial)
+                    déplacement ni de suppression (fonds patrimonial).
+                    Mémorise sa disposition (restore_layout/save_layout, préfixe
+                    « doublons ») mais SANS apply_default_dock_width : ses deux
+                    ImagePreview sont dans le WIDGET CENTRAL, pas dans un dock —
+                    leur taille suit la fenêtre, resizeDocks n'a pas prise
 - image_click.py  → widget PARTAGÉ ImageClick (pg.ImageView) : survol + Entrée/
                     Espace/Q, signaux tagging_finished/point_marked, overlay
                     show_existing_points. Coordonnées émises/stockées en
@@ -93,6 +97,14 @@ Architecture
                     _on_selection lit l'arbre ÉMETTEUR (self.sender()) et non
                     l'onglet courant. Explication et aperçu sont INDÉPENDANTS :
                     l'appariement reste explicable même sans aperçu.
+                    L'onglet « RAW sans JPEG » affiche une colonne
+                    « Développé ? » (✓ développé / — jamais développé), la
+                    distinction qui dit s'il reste tout à faire ou juste à
+                    exporter (voir engines/shots/sidecars.py).
+                    ⚠ Le QSplitter gauche/droite N'EST PAS couvert par le
+                    saveState de la fenêtre racine (qui ne connaît que les
+                    docks) : il mémorise LUI-MÊME sa répartition sur
+                    splitterMoved (clé shots/splitter).
                     Module séparé de gui_widgets car il connaît engines.shots,
                     là où gui_widgets ne porte que des briques génériques
 - gui_widgets.py  → widgets Qt PARTAGÉS : ResultWindow (fenêtre de résultat),
@@ -105,7 +117,45 @@ Architecture
                     setImage — pyqtgraph est col-major, NumPy row-major (même
                     convention que image_click.py). Orientation EXIF appliquée
                     via image_io.apply_exif_orientation (jamais redupliquée).
-                    Ne lève jamais : un fichier abîmé affiche un message
+                    Ne lève jamais : un fichier abîmé affiche un message.
+                    Porte aussi la DISPOSITION MÉMORISÉE : restore_layout /
+                    save_layout / apply_default_dock_width, employées par la
+                    racine, pre_classement et doublons (préfixe QSettings
+                    _LAYOUT_PREFIX propre à chaque fenêtre, save depuis
+                    closeEvent — seul chemin de sortie).
+                    ⚠ PIÈGE — UN DOCK SANS objectName EST IGNORÉ par saveState/
+                    restoreState : Qt écrit un avertissement sur stderr puis
+                    continue, la mémorisation semble marcher sans rien mémoriser.
+                    Même forme de panne silencieuse que l'icône manquante d'une
+                    extension ; verrouillé par test_gui_layout.py::
+                    test_every_dock_has_an_object_name.
+                    ⚠ sizeHint() NE SUFFIT PAS pour un dock : malgré
+                    ImagePreview.SIZE_HINT à 460 px, le dock naissait MESURÉ à
+                    180 px (son minimum) — QMainWindow arbitre entre docks et
+                    widget central, le vœu d'un enfant y perd. Seul resizeDocks
+                    tranche, et UNIQUEMENT si restore_layout a renvoyé False
+                    (sinon on écrase le réglage de l'utilisateur).
+                    ⚠ resizeDocks RÉPARTIT la largeur, il n'en CRÉE pas :
+                    root.ui fixe 769 px, trop étroits pour accorder 460 px à
+                    l'aperçu. apply_default_dock_width élargit donc d'abord la
+                    fenêtre (borné par availableGeometry, jamais rétrécissant).
+                    ⚠ ET IL FAUT APPELER DEPUIS showEvent, PAS __init__ : avant
+                    le 1er show, QMainWindow n'a pas arbitré ses zones — même
+                    appel, 241 px avant show contre 402-460 après (mesuré). Un
+                    drapeau _needs_default_layout garantit une seule fois (sinon
+                    un masquer/réafficher balaierait le réglage de l'user).
+                    Résultat mesuré sur la racine : 180 → 402 px ; sur
+                    pre_classement (dont le .ui fait déjà 1100 px) 460 px.
+                    ⚠ QT_QPA_PLATFORM=offscreen n'honore PAS restoreGeometry
+                    (taille de fenêtre) mais applique bien restoreState
+                    (répartition entre docks) : un test de disposition doit
+                    fixer la taille de la fenêtre et n'observer que les docks
+- tabular.py      → convention d'export tabulaire, sans Qt : TOUS les « CSV » du
+                    projet emploient la TABULATION (writer / dict_writer /
+                    reader, FILE_FILTER). Un chemin peut contenir une virgule
+                    (« Photos, scans » dans le corpus), jamais une tabulation :
+                    le découpage reste sans ambiguïté et sans échappement.
+                    L'extension reste .csv (celle que les tableurs ouvrent)
 - exif_info.py    → lecteur de métadonnées SANS Qt pour le dock « Infos, Exif »
                     (read_image_info / read_directory_summary). Renvoie une
                     hiérarchie {groupe: {tag: valeur}} via exiftool -g -j
@@ -241,6 +291,17 @@ Architecture
                     par PIL donne un faux résultat EN SILENCE. Passer par
                     preview.extract_preview() → exiftool -b -JpgFromRaw, qui rend
                     7360×4912 en 0,12 s (3,7 Mo au lieu de 41).
+                    sidecars.py : DÉVELOPPÉ ou JAMAIS DÉVELOPPÉ — un RAW
+                    accompagné d'un .xmp/.pp3/.out.pp3 a déjà été développé.
+                    ⚠ CONVENTION RELEVÉE SUR LE CORPUS : l'annexe porte le nom
+                    COMPLET du RAW (DSC_1.NEF.xmp — 1050 des 1877 NEF), JAMAIS
+                    DSC_1.xmp (0 cas). Se tromper de forme classerait tout le
+                    corpus « jamais développé » sans la moindre erreur.
+                    L'annexe appartient au RAW qu'elle JOUXTE (index par
+                    (répertoire, nom) — le compteur Nikon reboucle, cf. plus
+                    haut). D'où ShotInventory.raw_only_developed /
+                    raw_only_never_developed, qui PARTITIONNENT raw_only :
+                    « à exporter » n'est pas « tout reste à faire ».
                     Mesuré sur Dessins/ : 1877 RAW, 1440 paires sûres (76,7 %),
                     391 RAW SANS JPEG (à produire), 46 à confirmer. Scan 33-63 s
   - engines/face_id/ → cœur de auto_face_id_register, sans Qt, ne dérive PAS de

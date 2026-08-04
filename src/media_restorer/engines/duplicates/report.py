@@ -15,12 +15,12 @@ Aucun des deux ne modifie les images.
 from __future__ import annotations
 
 import base64
-import csv
 import html
 import io
 from pathlib import Path
 from typing import Sequence
 
+from media_restorer import tabular
 from media_restorer.engines.duplicates.groups import DuplicateGraph, Pair
 
 #: Colonnes du CSV, dans l'ordre.  L'ordre est figé : un fichier exporté
@@ -39,7 +39,7 @@ THUMB_SIDE = 220
 def write_csv(path: Path | str, pairs: Sequence[Pair]) -> None:
     """Écrit une ligne par paire, dictionnaire de mérite déplié."""
     with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_FIELDS, extrasaction="ignore")
+        writer = tabular.dict_writer(f, CSV_FIELDS, extrasaction="ignore")
         writer.writeheader()
         for p in pairs:
             ligne = p.merit.to_dict()
