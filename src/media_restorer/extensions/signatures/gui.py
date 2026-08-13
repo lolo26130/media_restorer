@@ -193,8 +193,6 @@ class SignaturesGUI(QMainWindow):
         self._outcomes: list[ScanOutcome] = []
         self._confident: list[ScanOutcome] = []
         self._pending_review: list[ScanOutcome] = []
-        # Index par chemin : le tableau est triable.
-        self._row_by_path: dict[str, int] = {}
         self._embedder_cache: tuple[object, tuple] | None = None
         self._detector_cache: tuple[object, tuple] | None = None
 
@@ -446,9 +444,7 @@ class SignaturesGUI(QMainWindow):
         table.setColumnCount(4)
         table.setHorizontalHeaderLabels(["Fichier", "Statut", "Dessinateur", "Score"])
         table.setRowCount(len(outcomes))
-        self._row_by_path = {}
         for row, outcome in enumerate(outcomes):
-            self._row_by_path[str(outcome.path)] = row
             cellule = QTableWidgetItem(outcome.path.name)
             cellule.setData(Qt.ItemDataRole.UserRole, str(outcome.path))
             table.setItem(row, 0, cellule)
@@ -464,10 +460,38 @@ class SignaturesGUI(QMainWindow):
         score = f"{outcome.candidates[0].score:.2f}" if outcome.candidates else ""
         table.setItem(row, 3, QTableWidgetItem(score))
 
-    def _update_row(self, path: Path, outcome: ScanOutcome) -> None:
-        row = self._row_by_path.get(str(path))
+    def _find_row(self, path: Path) -> int | None:
+        """Ligne portant *path*, cherchée en direct — jamais un index mis en cache.
+
+        Le tableau est TRIABLE (``sortingEnabled``) : un index retenu à
+        l'ajout ne désigne plus la bonne ligne dès que l'utilisateur trie une
+        colonne. Coût négligeable ici (une recherche par décision de revue,
+        pas une boucle chaude).
+        """
+        table = self._ui.tableResults
+        target = str(path)
+        for row in range(table.rowCount()):
+            item = table.item(row, 0)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) == target:
+                return row
+        return None
+
+    def _apply_outcome_update(self, updated: ScanOutcome) -> None:
+        """Remplace l'outcome de ``updated.path`` PARTOUT : table ET ``self._outcomes``.
+
+        Corrige un bug réel : ``_update_row`` ne rafraîchissait que la
+        cellule affichée, jamais ``self._outcomes`` — l'export CSV relisait
+        alors l'état d'avant la revue (tout en « À revoir »), quel que soit
+        ce qui avait été décidé depuis. Les deux doivent changer ENSEMBLE, un
+        seul point d'entrée pour ne plus jamais les faire diverger.
+        """
+        for index, outcome in enumerate(self._outcomes):
+            if outcome.path == updated.path:
+                self._outcomes[index] = updated
+                break
+        row = self._find_row(updated.path)
         if row is not None:
-            self._set_row_cells(row, outcome)
+            self._set_row_cells(row, updated)
 
     # ------------------------------------------------------------------
     # Revue
@@ -487,7 +511,7 @@ class SignaturesGUI(QMainWindow):
             image = imread_oriented(outcome.path)
             if image is None:
                 self._pending_review.pop(0)
-                self._update_row(outcome.path, replace(outcome, reason="illisible"))
+                self._apply_outcome_update(replace(outcome, reason="illisible"))
                 continue
             # Relu à CHAQUE item : un nom confirmé à l'instant (déjà écrit sur
             # disque par library.add_entry, voir _apply_decision) doit
@@ -515,7 +539,7 @@ class SignaturesGUI(QMainWindow):
             except Exception as exc:
                 QMessageBox.warning(self, "Erreur — écriture", str(exc))
                 return
-            self._update_row(outcome.path, replace(outcome, artist=None, reason="sans signature"))
+            self._apply_outcome_update(replace(outcome, artist=None, reason="sans signature"))
             return
 
         if decision.artist is None or decision.region is None:
@@ -540,7 +564,7 @@ class SignaturesGUI(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self, "Erreur — écriture", str(exc))
             return
-        self._update_row(outcome.path, replace(outcome, artist=entry.artist))
+        self._apply_outcome_update(replace(outcome, artist=entry.artist))
         self._recheck_pending()
 
     def _recheck_pending(self) -> None:
@@ -577,7 +601,7 @@ class SignaturesGUI(QMainWindow):
                     still_pending.append(replace(outcome, candidates=verdict.candidates))
                     continue
                 resolved = replace(outcome, artist=verdict.artist, candidates=verdict.candidates)
-                self._update_row(outcome.path, resolved)
+                self._apply_outcome_update(resolved)
             else:
                 reason = REASON_AMBIGUOUS if verdict.regime == matching.AMBIGUOUS else REASON_NO_MATCH
                 still_pending.append(replace(outcome, reason=reason, candidates=verdict.candidates))

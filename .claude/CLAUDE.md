@@ -113,6 +113,24 @@ Architecture
                     (modèle, device) DISTINCTS et non couplés : localisation
                     (OWL-ViT, comme auto_face_id_register) et comparaison
                     (SigLIP par défaut, engines/duplicates/embeddings.py).
+                    ⚠ PIÈGE VÉCU — DEUX SOURCES DE VÉRITÉ POUR LES RÉSULTATS.
+                    gui.py gardait self._outcomes (relu par l'export CSV) ET
+                    le QTableWidget affiché comme deux copies distinctes ;
+                    seul le tableau était rafraîchi après une décision de
+                    revue. Résultat vécu par l'utilisateur : le tableau à
+                    l'écran montrait les noms saisis, mais le CSV exporté ne
+                    montrait QUE l'état d'avant la revue (« À revoir » sur
+                    toute la ligne), sans la moindre erreur pour le signaler.
+                    Corrigé par _apply_outcome_update(), point d'entrée
+                    UNIQUE qui remplace l'entrée dans self._outcomes ET
+                    rafraîchit la cellule du tableau ENSEMBLE — plus jamais
+                    séparément. Piège apparenté corrigé au même endroit :
+                    l'ancien _row_by_path (index ligne mis en cache à l'ajout)
+                    aurait désigné la mauvaise ligne dès que l'utilisateur
+                    trie une colonne (tableResults a sortingEnabled=True) —
+                    remplacé par _find_row(), qui cherche en direct la ligne
+                    portant le chemin voulu (Qt.ItemDataRole.UserRole) plutôt
+                    que de faire confiance à une position mémorisée.
 - image_click.py  → widget PARTAGÉ ImageClick (pg.ImageView) : survol + Entrée/
                     Espace/Q, signaux tagging_finished/point_marked, overlay
                     show_existing_points. Coordonnées émises/stockées en

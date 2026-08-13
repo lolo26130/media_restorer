@@ -394,3 +394,37 @@ def test_export_csv_suggests_the_targets_parent_and_a_derived_name(qtbot, corpus
     win.on_actionExportCsv_triggered()
 
     assert seen["suggested"] == str(corpus.parent / f"signatures_{corpus.name}.csv")
+
+
+def test_export_csv_reflects_review_decisions_not_the_stale_scan(qtbot, corpus, tmp_path, monkeypatch):
+    """Bug réel signalé par l'utilisateur : le CSV ne montrait QUE « À revoir
+    (non localisée) », aucun des noms pourtant saisis en revue.
+
+    Cause : ``self._outcomes`` (relu par l'export) n'était mis à jour QUE
+    dans le tableau affiché, jamais dans la liste elle-même — l'export
+    relisait donc systématiquement l'état d'avant la revue.
+    """
+    a = corpus / "a.png"
+    crop_path = corpus / "crop.png"
+    cv2.imwrite(str(crop_path), np.full((10, 10, 3), 50, dtype="uint8"))
+    outcome = ScanOutcome(path=a, reason="no_location", candidates=(), crop_path=crop_path)
+
+    win = _make_window(qtbot, target=corpus, scan_fn=_fake_scan_fn([outcome]))
+    win.on_actionScan_triggered()
+    assert win._outcomes[0].reason == "no_location"  # état juste après le scan
+
+    win._pending_review = [outcome]
+    win._apply_decision(outcome, ReviewDecision(artist="Sennep", region=(0, 0, 5, 5)))
+
+    # self._outcomes DOIT refléter la décision — c'est lui que l'export relit.
+    assert win._outcomes[0].artist == "Sennep"
+
+    from PyQt6.QtWidgets import QFileDialog
+
+    out_csv = tmp_path / "out.csv"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **kw: (str(out_csv), ""))
+    win.on_actionExportCsv_triggered()
+
+    content = out_csv.read_text(encoding="utf-8")
+    assert "Sennep" in content
+    assert "non localisée" not in content
