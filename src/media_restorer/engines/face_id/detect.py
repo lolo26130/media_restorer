@@ -130,7 +130,7 @@ def detect_landmarks(
     par abscisse : la plus à gauche au libellé « left », la plus à droite au
     libellé « right ».
     """
-    scaled = _downscale_for_detection(image, max_side)
+    scaled = downscale_for_detection(image, max_side)
     sh, sw = scaled.shape[0], scaled.shape[1]
 
     label_query = {label: _label_to_query(label) for label in labels}
@@ -166,11 +166,14 @@ def detect_landmarks(
     return {label: result.get(label) for label in labels}
 
 
-def _downscale_for_detection(image: np.ndarray, max_side: int | None) -> np.ndarray:
+def downscale_for_detection(image: np.ndarray, max_side: int | None) -> np.ndarray:
     """Réduit *image* pour que son plus grand côté ≤ *max_side* (inchangée sinon).
 
     Utile pour la vitesse d'inférence ; aucune remise à l'échelle des
-    coordonnées n'est nécessaire car la détection renvoie des pourcentages.
+    coordonnées n'est nécessaire ici car :func:`detect_landmarks` renvoie des
+    pourcentages. Fonction **publique** (pas seulement interne à ce module) :
+    :mod:`~media_restorer.engines.signatures.location` la réutilise, mais doit
+    y remettre à l'échelle une vraie boîte en pixels — voir sa docstring.
     """
     if max_side is None:
         return image

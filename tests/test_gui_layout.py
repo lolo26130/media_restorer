@@ -54,12 +54,13 @@ def _flush_qt_deletions():
 
 
 def _fenetres(qtbot):
-    """Les trois fenêtres à docks du projet, prêtes et affichées."""
+    """Les quatre fenêtres à docks du projet, prêtes et affichées."""
     from media_restorer.extensions.doublons.gui import DoublonsGUI
     from media_restorer.extensions.pre_classement.gui import PreClassementGUI
+    from media_restorer.extensions.signatures.gui import SignaturesGUI
     from media_restorer.gui_root import ImageTreatmentWindow
 
-    for classe in (ImageTreatmentWindow, PreClassementGUI, DoublonsGUI):
+    for classe in (ImageTreatmentWindow, PreClassementGUI, DoublonsGUI, SignaturesGUI):
         fenetre = classe()
         qtbot.addWidget(fenetre)
         fenetre.resize(*TAILLE_FENETRE)

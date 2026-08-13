@@ -13,5 +13,7 @@
     <file>checkboard-32x32-456335.png</file>
     <file>eye.png</file>
     <file>smiley.png</file>
+    <file>tag-label.png</file>
+    <file>magnifier-32x32-456351.png</file>
   </qresource>
 </RCC>

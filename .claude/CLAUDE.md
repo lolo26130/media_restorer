@@ -77,6 +77,42 @@ Architecture
                     « doublons ») mais SANS apply_default_dock_width : ses deux
                     ImagePreview sont dans le WIDGET CENTRAL, pas dans un dock —
                     leur taille suit la fenêtre, resizeDocks n'a pas prise
+  - extensions/signatures/ → classement des dessins par signature d'auteur.
+                    Lot de signatures de référence VIDE au départ, constitué
+                    progressivement par les crops que l'utilisateur fournit
+                    quand la reconnaissance échoue ou hésite (voir
+                    engines/signatures/ pour le cœur). Architecture en TROIS
+                    temps jamais mélangés : (1) _ScanWorker (QThread,
+                    result_ready) — scan SILENCIEUX, lecture seule, localise
+                    + compare + classe chaque dessin ; (2) Revue — sur le fil
+                    PRINCIPAL, un dessin à la fois via SignatureReviewDialog
+                    (QDialog.exec(), donc une attente de CLIC, jamais d'un
+                    thread) ; (3) _WriteWorker — écrit le lot confiant du scan
+                    initial, confirmation unique. Le scan (1) est TERMINÉ et
+                    le thread MORT avant que (2) ne commence : aucune analogie
+                    avec le piège documenté plus bas (boucle d'événements
+                    imbriquée attendant le signal d'un QThread VIVANT).
+                    Raffinement : chaque décision de revue écrit IMMÉDIATEMENT
+                    (tags.write_artist, un seul fichier) PUIS recompare la file
+                    restante à la bibliothèque mise à jour
+                    (SignaturesGUI._recheck_pending) — l'effort manuel se
+                    réduit ainsi à peu près à « une fois par dessinateur
+                    distinct », pas « une fois par dessin », y compris au tout
+                    premier scan où la bibliothèque est vide.
+                    image_crop.py → ImageCrop (pg.ImageView + pg.RectROI) :
+                    AUCUN widget de sélection RECTANGULAIRE n'existait dans ce
+                    projet avant celui-ci (chaque pg.ImageView masque
+                    explicitement le bouton ROI intégré de pyqtgraph) — reste
+                    DANS l'extension (pas au cœur) tant qu'un second outil n'en
+                    a pas l'usage, même règle que pour image_click.py en son
+                    temps. Expose set_region()/get_region() PROGRAMMATIQUES
+                    (pas seulement à la souris) : la revue pré-positionne la
+                    zone sur la boîte localisée par OWL-ViT, et les tests
+                    pilotent le widget sans simuler d'événements souris bruts.
+                    config.py → DEUX modèles transformers, deux couples
+                    (modèle, device) DISTINCTS et non couplés : localisation
+                    (OWL-ViT, comme auto_face_id_register) et comparaison
+                    (SigLIP par défaut, engines/duplicates/embeddings.py).
 - image_click.py  → widget PARTAGÉ ImageClick (pg.ImageView) : survol + Entrée/
                     Espace/Q, signaux tagging_finished/point_marked, overlay
                     show_existing_points. Coordonnées émises/stockées en
@@ -311,7 +347,74 @@ Architecture
                     gauche/droite attribués par abscisse. build_detector() =
                     pipeline transformers (import lourd différé, modèle
                     téléchargé au 1er usage) ; detect_landmarks() prend un
-                    detector INJECTABLE → tests sans téléchargement ni inférence
+                    detector INJECTABLE → tests sans téléchargement ni inférence.
+                    downscale_for_detection() rendue PUBLIQUE (renommée depuis
+                    _downscale_for_detection) : engines/signatures/location.py
+                    la réutilise, second consommateur qui en a justifié la
+                    promotion
+  - engines/signatures/ → cœur de l'extension Signatures, sans Qt, ne dérive
+                    PAS de BaseEngine (contrat : dessin → dessinateur, ou entrée
+                    à revoir). location.py : réutilise face_id.build_detector
+                    (déjà validé sur des dessins/caricatures) mais PAS
+                    detect_landmarks, qui jette la boîte et ne renvoie qu'un
+                    centre en pourcentage — locate_signature() garde la boîte
+                    et la REMET À L'ÉCHELLE de l'image d'origine (la détection
+                    tourne sur une copie réduite ; l'oublier découpe la
+                    mauvaise zone, SANS erreur).
+                    descriptors.py : ⚠ RÉUTILISE engines/duplicates/
+                    embeddings.py TEL QUEL plutôt qu'un descripteur fait main
+                    (Fourier-Mellin/ink_profile) — deux signatures de la même
+                    main sur deux dessins différents n'ont AUCUNE
+                    transformation géométrique qui les relie (cas R3,
+                    redessin), exactement ce que ce projet a déjà exclu des
+                    descripteurs faits main pour les doublons. MESURÉ avant
+                    tout code GUI sur 9 signatures réelles (5 auteurs, Canard
+                    1948/1954), test du plus-proche-voisin en laissant une
+                    signature de côté : DINOv2-small 3/9, DINOv2-base 4/9,
+                    CLIP 2/9 (à peine au-dessus du hasard — ces modèles
+                    n'ont presque aucun contenu de « scène » à saisir sur un
+                    simple trait d'encre épars) contre SigLIP 7/9 (7/8 hors
+                    le seul auteur sans pair) — DEFAULT_MODEL = "siglip_base",
+                    à l'INVERSE de DEFAULT_MODEL="dinov2_small" dans
+                    embeddings.py. Un premier essai contaminé par du texte
+                    imprimé adjacent au crop avait faussé la mesure — corrigé
+                    en resserrant les crops à l'encre seule avant de conclure.
+                    Réserve : n=9 reste petit, à revalider informellement en
+                    observant le taux de verdicts CONFIDENT/AMBIGUOUS réels à
+                    mesure que la bibliothèque grossit.
+                    library.py : dossier signatures/<Nom>/NNNN.png, HORS
+                    ~/Pictures (Path(app_settings().fileName()).with_name(...),
+                    même motif que landmark_config.py). add_entry() DÉDOUBLONNE
+                    GLOBALEMENT (tous auteurs confondus, pas seulement le même
+                    auteur) : un quasi-doublon sous un AUTRE auteur est le cas
+                    DANGEREUX (faute de frappe type « Sennep »/« Senep ») qui
+                    rendrait toute correspondance future ambiguë en
+                    permanence — jamais silencieux, DuplicateWarning remonté
+                    à l'appelant plutôt que refusé (le choix explicite de
+                    l'utilisateur est respecté). validate_artist_name()
+                    REJETTE « / » et « | » (séparateurs des champs DigiKam,
+                    voir digikam_tags.py) — un nom qui en contiendrait un
+                    corromprait TagsList/HierarchicalSubject en silence.
+                    matching.py : classify() → CONFIDENT/AMBIGUOUS/NO_MATCH ;
+                    AMBIGUOUS ignore les rivaux du MÊME auteur que le
+                    meilleur (plusieurs crops d'un auteur en tête n'est pas
+                    une hésitation). Comparaison UNE requête contre N entrées
+                    → simple produit scalaire, PAS le traitement par blocs de
+                    engines/duplicates/candidates.py (pensé pour n² paires sur
+                    10⁵ images, hors sujet ici).
+                    tags.py : branche media_restorer/Dessinateur/<Nom>, feuille
+                    dédiée « (sans signature) » (même logique que « Repère
+                    ignoré » de landmarks.py) pour ne jamais reposer la
+                    question à un rescan.
+                    pipeline.py : scan_corpus() LECTURE SEULE (écriture séparée,
+                    confirmée par l'utilisateur — même partition que
+                    triage/duplicates). Idempotent par défaut (saute les
+                    dessins déjà étiquetés, y compris « sans signature » —
+                    force=True pour repasser). Cache de candidats
+                    (chemin, taille, mtime) → boîte + crop + empreinte : pas
+                    qu'un confort de relance, c'est ce qui rend possible la
+                    recomparaison de la file après chaque ajout SANS tout
+                    relocaliser/réembarquer.
 - imaging.py      → opérations image partagées (ex. lowpass(), utilisé par
                     dual_engine.py ET engines/vectorise/texture.py)
 - digikam_tags.py → moteur PARTAGÉ d'étiquettes hiérarchiques DigiKam, sans Qt
@@ -409,6 +512,15 @@ Architecture
        image_click.py et landmark_config.py DÉPLACÉS au cœur (étaient dans
        manual_mouse_points) pour partage sans dépendance inter-extensions.
        Dépendance transformers ajoutée (uv add)]
+    - [extension Signatures en place : classement des dessins par signature
+       d'auteur (engines/signatures/, localisation OWL-ViT + comparaison
+       SigLIP — modèle choisi après mesure empirique sur 9 signatures
+       réelles, voir engines/signatures/descriptors.py). Scan silencieux
+       (lecture seule) → revue modale (crop manuel via le nouveau widget
+       ImageCrop, pg.RectROI) → écriture confirmée. Nouvelle branche DigiKam
+       media_restorer/Dessinateur/<Nom>. downscale_for_detection()
+       d'engines/face_id/detect.py rendue publique pour ce second
+       consommateur]
 
 ## Piège connu — tests Qt avec de vrais QThread/pg.ImageView
     Démarrer un vrai QThread (worker.start()) puis attendre son résultat via

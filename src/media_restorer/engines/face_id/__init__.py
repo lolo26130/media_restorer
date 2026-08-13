@@ -11,6 +11,7 @@ from media_restorer.engines.face_id.detect import (
     Detector,
     build_detector,
     detect_landmarks,
+    downscale_for_detection,
 )
 
 __all__ = [
@@ -19,4 +20,5 @@ __all__ = [
     "Detector",
     "build_detector",
     "detect_landmarks",
+    "downscale_for_detection",
 ]
