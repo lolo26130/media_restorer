@@ -23,7 +23,10 @@ from media_restorer.engines.signatures import library, matching
 from media_restorer.engines.signatures.pipeline import ScanOutcome
 from media_restorer.extensions.signatures.gui import SignaturesGUI, _ScanWorker, _WriteWorker
 from media_restorer.extensions.signatures.image_crop import ImageCrop
-from media_restorer.extensions.signatures.review_dialog import ReviewDecision
+from media_restorer.extensions.signatures.review_dialog import (
+    ReviewDecision,
+    SignatureReviewDialog,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -282,6 +285,71 @@ def test_image_crop_region_is_clamped_to_image_bounds(qtbot):
     assert xmax == 50 and ymax == 50
 
 
+def test_review_dialog_starts_with_the_given_known_artists(qtbot):
+    dialog = SignatureReviewDialog(known_artists=["Cabrol", "Sennep"])
+    qtbot.addWidget(dialog)
+
+    items = [dialog._name_combo.itemText(i) for i in range(dialog._name_combo.count())]
+    assert items == ["Cabrol", "Sennep"]
+
+
+def test_review_dialog_set_known_artists_refreshes_the_combo(qtbot):
+    """Bug corrigé : la liste déroulante restait vide, jamais rechargée."""
+    dialog = SignatureReviewDialog(known_artists=[])
+    qtbot.addWidget(dialog)
+    assert dialog._name_combo.count() == 0
+
+    dialog.set_known_artists(["Cabrol"])
+    assert [dialog._name_combo.itemText(0)] == ["Cabrol"]
+
+    # Un nom confirmé PENDANT la revue (donc déjà sur disque) doit réapparaître
+    # dès l'appel suivant, sans reconstruire la boîte de dialogue.
+    dialog.set_known_artists(["Cabrol", "Sennep"])
+    items = [dialog._name_combo.itemText(i) for i in range(dialog._name_combo.count())]
+    assert items == ["Cabrol", "Sennep"]
+
+
+def test_start_review_refreshes_known_artists_between_items(qtbot, corpus, monkeypatch):
+    """La revue relit la bibliothèque avant CHAQUE item, pas seulement à l'ouverture."""
+    a, b = corpus / "a.png", corpus / "b.png"
+    crop_a = corpus / "crop_a.png"
+    cv2.imwrite(str(crop_a), np.full((10, 10, 3), 30, dtype="uint8"))
+    outcome_a = ScanOutcome(path=a, reason="no_match", candidates=(), crop_path=crop_a)
+    outcome_b = ScanOutcome(path=b, reason="no_match", candidates=())
+
+    win = _make_window(qtbot, target=corpus, runner=_empty_read)
+    win._pending_review = [outcome_a, outcome_b]
+
+    seen_known_artists = []
+    real_set_known_artists = SignatureReviewDialog.set_known_artists
+
+    def spy_set_known_artists(self, artists):
+        seen_known_artists.append(list(artists))
+        real_set_known_artists(self, artists)
+
+    monkeypatch.setattr(SignatureReviewDialog, "set_known_artists", spy_set_known_artists)
+
+    # Le premier item se confirme sous « Cabrol », puis la boîte se ferme —
+    # on n'a pas besoin d'aller jusqu'au bout pour vérifier le rechargement.
+    calls = {"n": 0}
+
+    def fake_exec(self):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            self._decision = ReviewDecision(artist="Cabrol", region=(0, 0, 5, 5))
+            from PyQt6.QtWidgets import QDialog
+            return QDialog.DialogCode.Accepted
+        from PyQt6.QtWidgets import QDialog
+        return QDialog.DialogCode.Rejected  # arrête la revue au second item
+
+    monkeypatch.setattr(SignatureReviewDialog, "exec", fake_exec)
+
+    win._start_review()
+
+    assert seen_known_artists[0] == []          # rien avant le premier item
+    assert seen_known_artists[1] == ["Cabrol"]   # Cabrol vient d'être confirmé
+
+
 def test_image_crop_get_crop_extracts_the_right_region(qtbot):
     widget = ImageCrop()
     qtbot.addWidget(widget)
@@ -295,3 +363,34 @@ def test_image_crop_get_crop_extracts_the_right_region(qtbot):
 
     assert crop.shape == (3, 3, 3)
     assert np.array_equal(crop, image_rgb[3:6, 2:5])
+
+
+# ---------------------------------------------------------------------------
+# Export CSV — nom et dossier suggérés
+# ---------------------------------------------------------------------------
+
+
+def test_export_csv_suggests_the_targets_parent_and_a_derived_name(qtbot, corpus, monkeypatch):
+    """Bug corrigé : la boîte de dialogue s'ouvrait sans dossier ni nom pertinents.
+
+    Le CSV est proposé à côté du dossier scanné (son PARENT), nommé d'après
+    lui — un dossier « 1949 » suggère « signatures_1949.csv ».
+    """
+    a = corpus / "a.png"
+    entry = library.LibraryEntry("Cabrol", a)
+    outcomes = [ScanOutcome(path=a, artist="Cabrol", candidates=(matching.Candidate(entry, 0.9),))]
+    win = _make_window(qtbot, target=corpus, scan_fn=_fake_scan_fn(outcomes))
+    win.on_actionScan_triggered()
+
+    from PyQt6.QtWidgets import QFileDialog
+
+    seen = {}
+
+    def fake_get_save_file_name(*args, **kwargs):
+        seen["suggested"] = args[2] if len(args) > 2 else kwargs.get("directory", "")
+        return "", ""
+
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", fake_get_save_file_name)
+    win.on_actionExportCsv_triggered()
+
+    assert seen["suggested"] == str(corpus.parent / f"signatures_{corpus.name}.csv")

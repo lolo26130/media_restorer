@@ -489,6 +489,10 @@ class SignaturesGUI(QMainWindow):
                 self._pending_review.pop(0)
                 self._update_row(outcome.path, replace(outcome, reason="illisible"))
                 continue
+            # Relu à CHAQUE item : un nom confirmé à l'instant (déjà écrit sur
+            # disque par library.add_entry, voir _apply_decision) doit
+            # apparaître dans la liste dès l'item suivant.
+            dialog.set_known_artists(library.known_artists())
             dialog.set_outcome(outcome, image)
             result = dialog.exec()
             if result != QDialog.DialogCode.Accepted:
@@ -635,8 +639,16 @@ class SignaturesGUI(QMainWindow):
     def _export_csv(self) -> None:
         if not self._outcomes:
             return
+        # À côté du dossier scanné (son PARENT), pas dedans : le CSV décrit
+        # ce dossier de l'extérieur — nommé d'après lui (« 1949 » →
+        # « signatures_1949.csv ») pour rester identifiable une fois sorti
+        # de son contexte.
+        if self._target is not None:
+            suggested = self._target.parent / f"signatures_{self._target.name}.csv"
+        else:
+            suggested = Path("signatures.csv")
         path, _ = QFileDialog.getSaveFileName(
-            self, "Exporter les résultats", "signatures.csv", tabular.FILE_FILTER
+            self, "Exporter les résultats", str(suggested), tabular.FILE_FILTER
         )
         if not path:
             return

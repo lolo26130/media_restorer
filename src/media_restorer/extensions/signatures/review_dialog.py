@@ -111,6 +111,19 @@ class SignatureReviewDialog(QDialog):
         layout.addLayout(buttons_row)
         self.resize(900, 700)
 
+    def set_known_artists(self, artists: list[str]) -> None:
+        """Recharge la liste déroulante des noms déjà connus.
+
+        À rappeler avant CHAQUE :meth:`set_outcome`, pas seulement à la
+        construction : un nom confirmé pendant la revue (donc déjà écrit sur
+        disque par ``library.add_entry``) doit réapparaître dans la liste dès
+        l'item suivant, sans attendre une prochaine ouverture de la fenêtre.
+        """
+        self._known_artists = list(artists)
+        self._name_combo.clear()
+        self._name_combo.addItems(self._known_artists)
+        self._name_combo.setCurrentText("")
+
     def set_outcome(self, outcome: ScanOutcome, image: np.ndarray) -> None:
         """Charge un nouveau dessin à revoir — un appel par item de la file."""
         self._decision = None
