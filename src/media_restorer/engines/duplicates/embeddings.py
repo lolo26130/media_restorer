@@ -116,6 +116,16 @@ def build_embedder(model_key: str = DEFAULT_MODEL, device: str = "cpu",
     ``transformers`` est **différé** jusqu'ici : le lancement de l'application
     ne paie pas le coût d'une bibliothèque dont l'utilisateur ne se servira
     peut-être jamais (convention du projet).
+
+    ``use_safetensors=True`` explicite : DINOv2 ne publie que des poids
+    safetensors et passe sans lui, mais CLIP et SigLIP publient AUSSI un
+    ``pytorch_model.bin`` (pickle) — sans ce paramètre, ``transformers`` peut
+    choisir cette forme et ``torch.load`` la refuse purement et simplement
+    sur les versions de torch < 2.6 installées ici (CVE-2025-32434), quel que
+    soit ``weights_only``. Sans le forcer, ``build_embedder("clip_base")``
+    et ``build_embedder("siglip_base")`` échouaient à l'usage — découvert en
+    comparant les modèles sur la vraie bibliothèque de signatures (voir
+    ``engines/signatures/benchmark.py``).
     """
     modele = EMBEDDING_MODELS_BY_KEY.get(model_key)
     if modele is None:
@@ -125,7 +135,7 @@ def build_embedder(model_key: str = DEFAULT_MODEL, device: str = "cpu",
     from transformers import AutoImageProcessor, AutoModel
 
     processeur = AutoImageProcessor.from_pretrained(modele.repo)
-    reseau = AutoModel.from_pretrained(modele.repo).to(device).eval()
+    reseau = AutoModel.from_pretrained(modele.repo, use_safetensors=True).to(device).eval()
 
     def embed(paths: Sequence[Path], *,
               on_progress: ProgressCallback | None = None) -> np.ndarray:

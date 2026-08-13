@@ -397,9 +397,35 @@ Architecture
                     embeddings.py. Un premier essai contaminé par du texte
                     imprimé adjacent au crop avait faussé la mesure — corrigé
                     en resserrant les crops à l'encre seule avant de conclure.
-                    Réserve : n=9 reste petit, à revalider informellement en
-                    observant le taux de verdicts CONFIDENT/AMBIGUOUS réels à
-                    mesure que la bibliothèque grossit.
+                    Réserve d'origine (n=9) LEVÉE : rejoué sur la vraie
+                    bibliothèque (benchmark.py, 22 signatures, 8
+                    dessinateurs, 5 avec ≥ 2 exemplaires) — SigLIP 16/19
+                    (84 %) contre DINOv2-base 10/19, DINOv2-small 9/19,
+                    CLIP 9/19. Confirme largement le choix initial, écart
+                    encore plus net que sur l'échantillon synthétique de
+                    départ. À rejouer à nouveau plus tard, la bibliothèque
+                    continuant de grossir avec l'usage.
+                    benchmark.py : compare_models()/format_comparison(), même
+                    esprit que engines/duplicates/benchmark.py MAIS sans jeu
+                    de verdicts à collecter — la bibliothèque porte déjà sa
+                    vérité terrain (dossier = auteur). Plus-proche-voisin en
+                    laisse-un-de-côté ; un auteur sans second exemplaire est
+                    exclu du calcul de précision (rien à retrouver
+                    structurellement) mais reste un DISTRACTEUR pour les
+                    autres — l'exclure complètement fausserait la mesure en
+                    facilitant les autres recherches.
+                    ⚠ PIÈGE DÉCOUVERT EN LANÇANT CE BANC D'ESSAI —
+                    engines/duplicates/embeddings.py build_embedder()
+                    échouait sur clip_base/siglip_base (jamais remarqué avant
+                    : DEFAULT_MODEL de doublons est dinov2_small). DINOv2 ne
+                    publie que des poids safetensors ; CLIP et SigLIP
+                    publient AUSSI un pytorch_model.bin (pickle) que
+                    torch.load refuse purement et simplement sur les
+                    versions de torch < 2.6 installées ici (CVE-2025-32434),
+                    quel que soit weights_only. Corrigé UNE FOIS pour toutes
+                    dans embeddings.py (use_safetensors=True explicite),
+                    profite aussi à doublons si un jour quelqu'un y change de
+                    modèle.
                     library.py : dossier signatures/<Nom>/NNNN.png, HORS
                     ~/Pictures (Path(app_settings().fileName()).with_name(...),
                     même motif que landmark_config.py). add_entry() DÉDOUBLONNE

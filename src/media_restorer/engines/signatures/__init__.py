@@ -12,6 +12,12 @@ Voir :mod:`~media_restorer.engines.signatures.pipeline` pour l'orchestration
 complète, et :mod:`~media_restorer.engines.signatures.descriptors` pour le
 choix — mesuré, pas supposé — du modèle d'empreinte.
 """
+from media_restorer.engines.signatures.benchmark import (
+    ModelScore,
+    compare_models,
+    evaluate_model,
+    format_comparison,
+)
 from media_restorer.engines.signatures.descriptors import DEFAULT_MODEL, embed_many, embed_one
 from media_restorer.engines.signatures.library import (
     DuplicateWarning,
@@ -71,12 +77,16 @@ __all__ = [
     "DuplicateWarning",
     "InvalidArtistName",
     "LibraryEntry",
+    "ModelScore",
     "ScanOutcome",
     "Verdict",
     "add_entry",
     "classify",
+    "compare_models",
     "embed_many",
     "embed_one",
+    "evaluate_model",
+    "format_comparison",
     "known_artists",
     "library_dir",
     "list_entries",
