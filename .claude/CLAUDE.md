@@ -426,6 +426,27 @@ Architecture
                     dans embeddings.py (use_safetensors=True explicite),
                     profite aussi à doublons si un jour quelqu'un y change de
                     modèle.
+                    RÉSULTAT NÉGATIF DOCUMENTÉ — SigNet (luizgh/sigver,
+                    Siamese CNN entraîné sur GPDS spécifiquement pour la
+                    vérification de signature, PAS un modèle de vision
+                    généraliste comme DINOv2/CLIP/SigLIP) essayé après
+                    recherche bibliographique. Piège rencontré : son
+                    prétraitement centre la signature sur un canevas pensé
+                    pour un chèque bancaire SCANNÉ EN ENTIER
+                    (952×1360) — appliqué tel quel à nos crops déjà
+                    resserrés, la signature rétrécit à un point minuscule
+                    perdu dans un cadre presque vide → 9/19 (47 %),
+                    aussi mauvais que CLIP. Canevas reproportionné à la
+                    taille du crop lui-même (marge 40 %, pas la taille par
+                    défaut) → 14/19 (74 %), largement rattrapé mais
+                    toujours EN DESSOUS de SigLIP (16/19, 84 %). Pas
+                    intégré au projet : perd la comparaison même après
+                    correction du prétraitement, et ajouterait une
+                    dépendance (poids ~63 Mo hébergés sur Google Drive,
+                    licence GPDS non-commerciale) pour un résultat inférieur.
+                    À revisiter seulement si un futur modèle de vérification
+                    de signature publie de meilleurs poids, ou si la
+                    bibliothèque grossit assez pour rejouer la comparaison.
                     library.py : dossier signatures/<Nom>/NNNN.png, HORS
                     ~/Pictures (Path(app_settings().fileName()).with_name(...),
                     même motif que landmark_config.py). add_entry() DÉDOUBLONNE
